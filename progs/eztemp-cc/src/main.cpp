@@ -90,7 +90,7 @@ int main(int argc, char ** argv)
             start = std::chrono::system_clock::now();
         }
 
-        *out << ez::renderer::render_json(input, params);
+        *out << ez::renderer::render(input, params);
 
         if(verbose)
         {

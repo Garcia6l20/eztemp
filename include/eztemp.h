@@ -13,6 +13,7 @@
 #include <memory>
 #include <cctype>
 #include <functional>
+#include <fstream>
 
 #include <eztemp_export.h>
 
@@ -181,19 +182,23 @@ private:
     static std::string m_end_tag;
 };
 
-using token_list = std::vector<std::shared_ptr<token>>;
+using compiled_tempalte = std::vector<std::shared_ptr<token>>;
 
 class EZTEMP_EXPORT renderer
 {
-private:
-    renderer();
-
-    token_list make_token_list(const std::string & input);
-
 public:
-    static std::string render_json(const std::string & input, const std::string & context);
+    static compiled_tempalte compile(std::ifstream & fs);
+    static compiled_tempalte compile(const std::string & input);
 
     static std::string render(const std::string & input, const dict & context);
+    /**
+     * @brief Json context rendering
+     * @param input     Template string.
+     * @param context   Parameters (Json string).
+     * @return The built template.
+     **/
+    static std::string render(const std::string & input, const std::string & context);
+    static std::string render(const ez::compiled_tempalte & input, const dict & context);
 
     using render_function = std::function<std::string(const array)>;
 

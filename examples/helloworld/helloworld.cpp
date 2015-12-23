@@ -65,7 +65,7 @@ int main(int argc, char ** argv)
 
     // reder json example
     std::cout <<
-    ez::renderer::render_json("Hello {{ you }} !!\n"
+    ez::renderer::render("Hello {{ you }} !!\n"
                          "{# for name in names #}"
                          "{# for say in says #}"
                          "- {{ name }} says: {{ say }} !\n"

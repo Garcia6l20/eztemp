@@ -57,17 +57,18 @@ std::string render_token::render(const dict & context){
    }
 }
 
-renderer::renderer()
+compiled_tempalte renderer::compile(std::ifstream &fs)
 {
+    return compile(std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>()));
 }
 
-token_list renderer::make_token_list(const std::string &input)
+compiled_tempalte renderer::compile(const std::string &input)
 {
-    token_list list;
+    compiled_tempalte list;
     int prev_pos = 0;
     int curr_pos = 0;
 
-    auto push_text_token_if_required = [&curr_pos, &prev_pos, &input](token_list & list){
+    auto push_text_token_if_required = [&curr_pos, &prev_pos, &input](compiled_tempalte & list){
         if(curr_pos != prev_pos)
         {
             list.push_back(std::shared_ptr<token>(new text_token(input.substr(prev_pos,curr_pos-prev_pos))));
@@ -114,7 +115,7 @@ token_list renderer::make_token_list(const std::string &input)
     return list;
 }
 
-std::string renderer::render_json(const std::string & input, const std::string & context)
+std::string renderer::render(const std::string & input, const std::string & context)
 {
     std::stringstream ss;
     ss << context;
@@ -160,12 +161,15 @@ std::string renderer::render_json(const std::string & input, const std::string &
 
 std::string renderer::render(const std::string & input, const dict & context)
 {
-    std::string output;
-    renderer render;
-    token_list toks = render.make_token_list(input);
+    return render(renderer::compile(input), context);
+}
 
-    std::function<void(token_list & toks, const dict & context, const std::vector<std::string> &, int &, std::string &)> process_for_loop;
-    process_for_loop = [&output, &process_for_loop](token_list & toks, const dict & context, const std::vector<std::string> & params, int & index, std::string & output){
+
+std::string renderer::render(const compiled_tempalte & toks, const dict & context)
+{
+    std::string output;
+    std::function<void(const compiled_tempalte & toks, const dict & context, const std::vector<std::string> &, int &, std::string &)> process_for_loop;
+    process_for_loop = [&output, &process_for_loop](const compiled_tempalte & toks, const dict & context, const std::vector<std::string> & params, int & index, std::string & output){
         dict for_context = context;
         std::vector<ez::node> & array = boost::get<std::vector<ez::node>>(for_context.at(params[3]));
         int ii_last = index + 1;
@@ -202,7 +206,7 @@ std::string renderer::render(const std::string & input, const dict & context)
         index = ii_last;
     };
 
-    auto process_tokens = [&context, &process_for_loop](token_list & toks, std::string & output){
+    auto process_tokens = [&context, &process_for_loop](const compiled_tempalte & toks, std::string & output){
         for(int ii = 0; ii < toks.size(); ++ii)
         {
             switch(toks[ii]->token_type())
@@ -225,6 +229,7 @@ std::string renderer::render(const std::string & input, const dict & context)
     process_tokens(toks, output);
     return output;
 }
+
 
 static bool register_functions()
 {
