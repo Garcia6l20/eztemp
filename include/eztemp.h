@@ -41,6 +41,14 @@ using array = std::vector<ez::temp::node>;
 class dict: public std::map<const std::string, node>
 {
 public:
+    dict(const std::initializer_list<std::pair<const std::string, node>> & init_lst)
+    {
+        for(auto & item: init_lst)
+        {
+            (*this)[item.first] = item.second;
+        }
+    }
+    dict() {}
     static dict from_json(const std::string & json);
 };
 
