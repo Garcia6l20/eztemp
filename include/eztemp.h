@@ -19,6 +19,8 @@
 
 namespace ez {
 
+namespace temp {
+
 /**
  * @brief EZ Node
  * A variant type holding manipulated values.
@@ -31,7 +33,7 @@ using node = boost::make_recursive_variant<
  * @brief EZ Array
  * A list (vector) of nodes.
  */
-using array = std::vector<ez::node>;
+using array = std::vector<ez::temp::node>;
 
 /**
  * @brief EZ Dict
@@ -62,7 +64,7 @@ public:
     {
         return val;
     }
-    std::string operator ()(const std::map<const std::string,ez::node> & map) const
+    std::string operator ()(const std::map<const std::string, node> & map) const
     {
         return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
     }
@@ -158,16 +160,19 @@ public:
     section_token(const std::string & content):
         token(token::type::section),
         m_content(content.substr(m_start_tag.size()))
-    {}
-    std::string render(const dict& context) override { return ""; }
-    std::vector<std::string> content() {
-        std::vector<std::string> vec = split(m_content, ' ');
-        std::for_each(vec.begin(), vec.end(), [](std::string & str){
+    {
+        m_params = split(m_content, ' ');
+
+        // remove all white spaces
+        std::for_each(m_params.begin(), m_params.end(), [](std::string & str){
             str.erase(std::remove(str.begin(), str.end(), ' '), str.end());
         });
-        vec.erase(std::remove(vec.begin(), vec.end(), ""), vec.end());
-        return vec;
+
+        // remove all blank params
+        m_params.erase(std::remove(m_params.begin(), m_params.end(), ""), m_params.end());
     }
+    std::string render(const dict& context) override { return ""; }
+    const std::vector<std::string> & params() const { return m_params; }
     static bool is_token_start(const std::string & text) {
         return text.substr(0, m_start_tag.size()) == m_start_tag;
     }
@@ -178,17 +183,18 @@ public:
     static inline const std::string & end_tag() { return m_end_tag; }
 private:
     std::string m_content;
+    std::vector <std::string> m_params;
     static std::string m_start_tag;
     static std::string m_end_tag;
 };
 
-using compiled_tempalte = std::vector<std::shared_ptr<token>>;
+using compiled_template = std::vector<std::shared_ptr<token>>;
 
 class EZTEMP_EXPORT renderer
 {
 public:
-    static compiled_tempalte compile(std::ifstream & fs);
-    static compiled_tempalte compile(const std::string & input);
+    static compiled_template compile(const std::string & input, const std::string & path = "");
+    static compiled_template compile_file(const std::string & filepath);
 
     static std::string render(const std::string & input, const dict & context);
     /**
@@ -198,7 +204,7 @@ public:
      * @return The built template.
      **/
     static std::string render(const std::string & input, const std::string & context);
-    static std::string render(const ez::compiled_tempalte & input, const dict & context);
+    static std::string render(const ez::temp::compiled_template & input, const dict & context);
 
     using render_function = std::function<std::string(const array)>;
 
@@ -220,6 +226,8 @@ inline void remove_whitespaces(std::string & str){
     str.erase(std::remove(str.begin(), str.end(), '\t'), str.end());
 }
 
-}
+} // namespace temp
+
+} // namespace ez
 
 #endif // __EZTEMP_H__

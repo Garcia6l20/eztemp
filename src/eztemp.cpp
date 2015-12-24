@@ -4,10 +4,12 @@
 #include <boost/date_time/posix_time/posix_time.hpp>
 #include <boost/date_time/local_time_adjustor.hpp>
 #include <boost/date_time/c_local_time_adjustor.hpp>
+#include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/foreach.hpp>
+#include <boost/tuple/tuple.hpp>
 #include <cassert>
 #include <exception>
 #include <iostream>
@@ -19,7 +21,7 @@
 
 #include <eztemp.h>
 
-using namespace ez;
+using namespace ez::temp;
 
 std::map<std::string, renderer::render_function> renderer::m_functions;
 
@@ -57,18 +59,75 @@ std::string render_token::render(const dict & context){
    }
 }
 
-compiled_tempalte renderer::compile(std::ifstream &fs)
+compiled_template renderer::compile_file(const std::string &file_path)
 {
-    return compile(std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>()));
+    std::ifstream fs(file_path);
+    return compile(std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>()), boost::filesystem::path(file_path).remove_filename().string());
 }
 
-compiled_tempalte renderer::compile(const std::string &input)
+inline static
+int get_next_section(const compiled_template & tokens, const std::string & name, std::shared_ptr<section_token> & section,int start_index = 0)
 {
-    compiled_tempalte list;
+    for(int ii = start_index; ii < tokens.size(); ++ii)
+    {
+        if(tokens[ii]->token_type() == token::type::section)
+        {
+            section = std::dynamic_pointer_cast<section_token>(tokens[ii]);
+            if(section->params()[0] == name)
+            {
+                return ii;
+            }
+        }
+    }
+    return -1;
+}
+
+inline static
+int get_next_block(compiled_template & list, int start_index, std::string & block_name)
+{
+    std::shared_ptr<section_token> section;
+    int index;
+    if((index = get_next_section(list, "block", section, start_index)) != -1)
+    {
+        block_name = section->params()[1];
+        return index;
+    }
+    else return -1;
+}
+
+inline static
+int get_next_endblock(compiled_template & list, int start_index)
+{
+    std::shared_ptr<section_token> section;
+    int index;
+    if((index = get_next_section(list, "endblock", section, start_index)) != -1)
+    {
+        return index;
+    }
+    else return -1;
+}
+
+inline static
+int get_named_block (compiled_template & list,std::string block_name)
+{
+    std::shared_ptr<section_token> section;
+    int index = 0;
+    while((index = get_next_section(list, "block", section, index)) != -1)
+    {
+        if(block_name == section->params()[1])
+            return index;
+        index += 1;
+    }
+    return -1;
+}
+
+compiled_template renderer::compile(const std::string &input, const std::string & path)
+{
+    compiled_template tokens;
     int prev_pos = 0;
     int curr_pos = 0;
 
-    auto push_text_token_if_required = [&curr_pos, &prev_pos, &input](compiled_tempalte & list){
+    auto push_text_token_if_required = [&curr_pos, &prev_pos, &input](compiled_template & list){
         if(curr_pos != prev_pos)
         {
             list.push_back(std::shared_ptr<token>(new text_token(input.substr(prev_pos,curr_pos-prev_pos))));
@@ -85,8 +144,8 @@ compiled_tempalte renderer::compile(const std::string &input)
             {
                 if(render_token::is_token_end(input.substr(curr_pos+jj)))
                 {
-                    push_text_token_if_required(list);
-                    list.push_back(std::shared_ptr<token>(new render_token(input.substr(curr_pos,jj))));
+                    push_text_token_if_required(tokens);
+                    tokens.push_back(std::shared_ptr<token>(new render_token(input.substr(curr_pos,jj))));
                     curr_pos += jj + render_token::end_tag().size();
                     prev_pos = curr_pos;
                     --curr_pos;
@@ -100,8 +159,8 @@ compiled_tempalte renderer::compile(const std::string &input)
             {
                 if(section_token::is_token_end(input.substr(curr_pos+jj)))
                 {
-                    push_text_token_if_required(list);
-                    list.push_back(std::shared_ptr<token>(new section_token(input.substr(curr_pos,jj))));
+                    push_text_token_if_required(tokens);
+                    tokens.push_back(std::shared_ptr<token>(new section_token(input.substr(curr_pos,jj))));
                     curr_pos += jj + section_token::end_tag().size();
                     prev_pos = curr_pos;
                     --curr_pos;
@@ -110,9 +169,47 @@ compiled_tempalte renderer::compile(const std::string &input)
             }
         }
     }
-    push_text_token_if_required(list);
+    push_text_token_if_required(tokens);
 
-    return list;
+    // check for extends
+    std::string extending_base;
+
+    std::shared_ptr<section_token> section;
+    int index;
+    if((index = get_next_section(tokens, "extends", section, 0)) >= 0)
+    {
+        // extending ...
+
+        extending_base = section->params()[1];
+        compiled_template base_tokens = compile_file(path + "/" + extending_base + ".ez" );
+
+        std::string block_name;
+
+        int index_base = 0;
+        int index = 0;
+        while((index_base = get_next_block(base_tokens, index_base, block_name)) != -1)
+        {
+            int index_endblock_base = get_next_endblock(base_tokens, index_base);
+
+            if((index = get_named_block(tokens, block_name)) != -1)
+            {
+                // erase base content
+                base_tokens.erase(base_tokens.begin() + index_base, base_tokens.begin() + index_endblock_base);
+
+                int index_endblock = get_next_endblock(tokens, index);
+                base_tokens.insert(base_tokens.begin() + index_base, tokens.begin() + index + 1, tokens.begin() + index_endblock);
+                index = 0;
+            }
+            else
+            {
+                base_tokens.erase(base_tokens.begin() + index_base);            // remove the block section
+                base_tokens.erase(base_tokens.begin() + index_endblock_base);   // remove the endblock section
+            }
+        }
+        tokens = base_tokens;
+    }
+
+    return tokens;
 }
 
 std::string renderer::render(const std::string & input, const std::string & context)
@@ -133,11 +230,11 @@ std::string renderer::render(const std::string & input, const std::string & cont
             {
                 if(context.find(parent_key) != context.end())
                 {
-                    boost::get<std::vector<ez::node>>(context[parent_key]).push_back(pt.data());
+                    boost::get<std::vector<node>>(context[parent_key]).push_back(pt.data());
                 }
                 else
                 {
-                    context[parent_key] = std::vector<ez::node>{pt.data()};
+                    context[parent_key] = std::vector<node>{pt.data()};
                 }
             }
             else
@@ -165,32 +262,36 @@ std::string renderer::render(const std::string & input, const dict & context)
 }
 
 
-std::string renderer::render(const compiled_tempalte & toks, const dict & context)
+std::string renderer::render(const compiled_template & toks, const dict & context)
 {
     std::string output;
-    std::function<void(const compiled_tempalte & toks, const dict & context, const std::vector<std::string> &, int &, std::string &)> process_for_loop;
-    process_for_loop = [&output, &process_for_loop](const compiled_tempalte & toks, const dict & context, const std::vector<std::string> & params, int & index, std::string & output){
+
+    std::function<void(const compiled_template & toks, const dict & context, const std::vector<std::string> &, int &, std::string &)> process_for_loop;
+    process_for_loop = [&output, &process_for_loop](const compiled_template & toks, const dict & context, const std::vector<std::string> & params, int & index, std::string & output){
         dict for_context = context;
-        std::vector<ez::node> & array = boost::get<std::vector<ez::node>>(for_context.at(params[3]));
+        std::vector<node> & array = boost::get<std::vector<node>>(for_context.at(params[3]));
         int ii_last = index + 1;
-        for(const ez::node & _node: array)
+        for(const node & _node: array)
         {
             for_context[params[1]] = _node;
+
             bool loop_done = false;
             int ii;
             for(ii = index + 1; ii < toks.size() && !loop_done; ++ii)
             {
+                int for_index;
+                std::shared_ptr<section_token> section;
+
                 switch(toks[ii]->token_type())
                 {
                 case token::type::section:
                     {
                         std::shared_ptr<section_token> open_sec = std::dynamic_pointer_cast<section_token>(toks[ii]);
-                        std::vector<std::string> params = open_sec->content();
-                        if(params[0] == "for")
+                        if(open_sec->params()[0] == "for")
                         {
-                            process_for_loop(toks, for_context, params, ii, output);
+                            process_for_loop(toks, for_context, open_sec->params(), ii, output);
                         }
-                        else if(params[0] == "endfor")
+                        else if(open_sec->params()[0] == "endfor")
                         {
                             ii_last = ii;
                             loop_done = true;
@@ -206,7 +307,7 @@ std::string renderer::render(const compiled_tempalte & toks, const dict & contex
         index = ii_last;
     };
 
-    auto process_tokens = [&context, &process_for_loop](const compiled_tempalte & toks, std::string & output){
+    auto process_tokens = [&context, &process_for_loop](const compiled_template & toks, std::string & output){
         for(int ii = 0; ii < toks.size(); ++ii)
         {
             switch(toks[ii]->token_type())
@@ -214,10 +315,9 @@ std::string renderer::render(const compiled_tempalte & toks, const dict & contex
             case token::type::section:
                 {
                     std::shared_ptr<section_token> open_sec = std::dynamic_pointer_cast<section_token>(toks[ii]);
-                    std::vector<std::string> params = open_sec->content();
-                    if(params[0] == "for")
+                    if(open_sec->params()[0] == "for")
                     {
-                        process_for_loop(toks, context, params, ii, output);
+                        process_for_loop(toks, context, open_sec->params(), ii, output);
                     }
                 }
                 break;
@@ -233,14 +333,14 @@ std::string renderer::render(const compiled_tempalte & toks, const dict & contex
 
 static bool register_functions()
 {
-    ez::renderer::add_function("date",[](ez::array args) -> std::string{
+    renderer::add_function("date",[](array args) -> std::string{
        namespace pt = boost::posix_time;
        namespace gr = boost::gregorian;
        pt::ptime todayUtc(gr::day_clock::universal_day(), pt::second_clock::universal_time().time_of_day());
        return pt::to_simple_string(todayUtc);
     });
 
-    ez::renderer::add_function("toupper",[](ez::array args) -> std::string{
+    renderer::add_function("toupper",[](array args) -> std::string{
         std::string str = boost::get<std::string>(args[0]);
         boost::to_upper(str);
         return str;

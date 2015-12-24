@@ -11,7 +11,9 @@ include(GenerateExportHeader)
 set(Boost_USE_STATIC_LIBS        ON)
 set(Boost_USE_MULTITHREADED      ON)
 
-find_package(Boost COMPONENTS date_time program_options regex REQUIRED)
+find_package(Boost COMPONENTS date_time program_options regex filesystem REQUIRED)
+
+add_definitions(-DBOOST_SYSTEM_NO_DEPRECATED)
 
 message(STATUS "Boost libraries: ${Boost_LIBRARIES}")
 
