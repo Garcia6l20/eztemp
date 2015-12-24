@@ -6,6 +6,7 @@
 #include <ctime>
 
 #include <boost/program_options.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 
 namespace po = boost::program_options;
 
@@ -78,6 +79,7 @@ int main(int argc, char ** argv)
         }
 
         input = unescape(vm["input"].as<std::string>());
+
         if(vm.count("params"))
         {
             params = unescape(vm["params"].as<std::string>());
@@ -90,7 +92,14 @@ int main(int argc, char ** argv)
             start = std::chrono::system_clock::now();
         }
 
-        *out << ez::temp::renderer::render(input, params);
+        if(boost::ends_with(input, ".ez"))
+        {
+            *out << ez::temp::renderer::render_file(input, params);
+        }
+        else
+        {
+            *out << ez::temp::renderer::render(input, params);
+        }
 
         if(verbose)
         {

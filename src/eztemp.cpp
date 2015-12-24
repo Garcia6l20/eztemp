@@ -27,8 +27,8 @@ std::map<std::string, renderer::render_function> renderer::m_functions;
 
 std::string render_token::m_start_tag = "{{";
 std::string render_token::m_end_tag = "}}";
-std::string section_token::m_start_tag = "{#";
-std::string section_token::m_end_tag = "#}";
+std::string section_token::m_start_tag = "{%";
+std::string section_token::m_end_tag = "%}";
 
 std::string render_token::render(const dict & context){
    std::string full_key = m_content;
@@ -124,52 +124,83 @@ int get_named_block (compiled_template & list,std::string block_name)
 compiled_template renderer::compile(const std::string &input, const std::string & path)
 {
     compiled_template tokens;
-    int prev_pos = 0;
-    int curr_pos = 0;
 
-    auto push_text_token_if_required = [&curr_pos, &prev_pos, &input](compiled_template & list){
-        if(curr_pos != prev_pos)
+    auto push_text_if_required = [&input](compiled_template & list, std::string::const_iterator begin, std::string::const_iterator end){
+        if(begin != end)
         {
-            list.push_back(std::shared_ptr<token>(new text_token(input.substr(prev_pos,curr_pos-prev_pos))));
+            list.push_back(std::shared_ptr<token>(new text_token(std::string(begin, end))));
         }
     };
-    char * p = (char*)input.c_str();
-    for(; curr_pos < input.size(); ++curr_pos)
-    {
-        p = (char*)input.c_str() + curr_pos;
 
-        if(render_token::is_token_start(input.substr(curr_pos)))
+    std::string::const_iterator last_it = input.begin();
+    std::string::const_iterator it = input.begin();
+    for(; it < input.end(); ++it)
+    {
+        if(render_token::is_start(it, input.end()))
         {
-            for(int jj = 0; jj < input.size()-curr_pos; ++jj)
+            std::string::const_iterator it_start = it;
+            for(; it < input.end(); ++it)
             {
-                if(render_token::is_token_end(input.substr(curr_pos+jj)))
+                if(render_token::is_end(it, input.end()))
                 {
-                    push_text_token_if_required(tokens);
-                    tokens.push_back(std::shared_ptr<token>(new render_token(input.substr(curr_pos,jj))));
-                    curr_pos += jj + render_token::end_tag().size();
-                    prev_pos = curr_pos;
-                    --curr_pos;
+                    push_text_if_required(tokens, last_it, it_start);
+                    it += render_token::end_tag().size();
+                    tokens.push_back(std::shared_ptr<token>(new render_token(std::string(it_start, it))));
+                    last_it = it;
+                    --it;
                     break;
                 }
             }
         }
-        else if(section_token::is_token_start(input.substr(curr_pos)))
+        else if(section_token::is_start(it, input.end()))
         {
-            for(int jj = 0; jj < input.size()-curr_pos; ++jj)
+            std::string::const_iterator it_start = it;
+            for(; it < input.end(); ++it)
             {
-                if(section_token::is_token_end(input.substr(curr_pos+jj)))
+                if(section_token::is_end(it, input.end()))
                 {
-                    push_text_token_if_required(tokens);
-                    tokens.push_back(std::shared_ptr<token>(new section_token(input.substr(curr_pos,jj))));
-                    curr_pos += jj + section_token::end_tag().size();
-                    prev_pos = curr_pos;
-                    --curr_pos;
+                    // clean pre-section (remove spaces)
+                    int pos = std::distance(input.begin(), it_start);
+                    int prev_nl = input.rfind('\n', pos);
+                    bool remove = false;
+                    if(prev_nl != std::string::npos)
+                    {
+                        int dist = pos - prev_nl;
+                        remove = true;
+                        if(dist != 0)
+                        {
+                            for(std::string::const_iterator it = it_start - dist + 1; it < it_start; ++it)
+                            {
+                                if((*it) != ' ' && (*it) != '\t')
+                                    remove = false; break;
+                            }
+                        }
+                        else remove = false;
+                        if(remove)
+                        {
+                            push_text_if_required(tokens, last_it, it_start - dist);
+                        }
+                        else
+                        {
+                            push_text_if_required(tokens, last_it, it_start);
+                        }
+                    }
+                    else
+                    {
+                        push_text_if_required(tokens, last_it, it_start);
+                    }
+
+                    it += section_token::end_tag().size();
+                    tokens.push_back(std::shared_ptr<token>(new section_token(std::string(it_start, it))));
+                    last_it = it;
+
+                    --it;
                     break;
                 }
             }
         }
     }
-    push_text_token_if_required(tokens);
+    push_text_if_required(tokens, last_it, it);
 
     // check for extends
     std::string extending_base;
@@ -202,8 +233,8 @@ compiled_template renderer::compile(const std::string &input, const std::string 
             }
             else
             {
-                base_tokens.erase(base_tokens.begin() + index_base);            // remove the block section
                 base_tokens.erase(base_tokens.begin() + index_endblock_base);   // remove the endblock section
+                base_tokens.erase(base_tokens.begin() + index_base);            // remove the block section
             }
         }
         tokens = base_tokens;
@@ -212,15 +243,14 @@ compiled_template renderer::compile(const std::string &input, const std::string 
     return tokens;
 }
 
-std::string renderer::render(const std::string & input, const std::string & context)
+dict dict::from_json(const std::string &json)
 {
+    dict context;
+
     std::stringstream ss;
-    ss << context;
+    ss << json;
     boost::property_tree::ptree pt;
     boost::property_tree::read_json(ss, pt);
-
-    dict real_context;
-
     using boost::property_tree::ptree;
     std::function<void(const std::string&, ptree&, dict &, const std::string&)> parse_node;
     parse_node = [&parse_node](const std::string& key, ptree & pt, dict & context, const std::string& parent_key){
@@ -251,9 +281,13 @@ std::string renderer::render(const std::string & input, const std::string & cont
         }
     };
 
-    parse_node("", pt, real_context, "");
+    parse_node("", pt, context, "");
+    return context;
+}
 
-    return render(input, real_context);
+std::string renderer::render(const std::string & input, const std::string & context)
+{
+    return render(input, dict::from_json(context));
 }
 
 std::string renderer::render(const std::string & input, const dict & context)
@@ -262,53 +296,24 @@ std::string renderer::render(const std::string & input, const dict & context)
 }
 
 
+std::string renderer::render_file(const std::string & input, const std::string & context)
+{
+    return render(compile_file(input), dict::from_json(context));
+}
+
+
 std::string renderer::render(const compiled_template & toks, const dict & context)
 {
     std::string output;
 
-    std::function<void(const compiled_template & toks, const dict & context, const std::vector<std::string> &, int &, std::string &)> process_for_loop;
-    process_for_loop = [&output, &process_for_loop](const compiled_template & toks, const dict & context, const std::vector<std::string> & params, int & index, std::string & output){
-        dict for_context = context;
-        std::vector<node> & array = boost::get<std::vector<node>>(for_context.at(params[3]));
-        int ii_last = index + 1;
-        for(const node & _node: array)
-        {
-            for_context[params[1]] = _node;
+    using process_tokens_func = std::function<int(const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor)>;
+    process_tokens_func process_tokens;
 
-            bool loop_done = false;
-            int ii;
-            for(ii = index + 1; ii < toks.size() && !loop_done; ++ii)
-            {
-                int for_index;
-                std::shared_ptr<section_token> section;
-
-                switch(toks[ii]->token_type())
-                {
-                case token::type::section:
-                    {
-                        std::shared_ptr<section_token> open_sec = std::dynamic_pointer_cast<section_token>(toks[ii]);
-                        if(open_sec->params()[0] == "for")
-                        {
-                            process_for_loop(toks, for_context, open_sec->params(), ii, output);
-                        }
-                        else if(open_sec->params()[0] == "endfor")
-                        {
-                            ii_last = ii;
-                            loop_done = true;
-                            break;
-                        }
-                    }
-                    break;
-                default:
-                    output += toks[ii]->render(for_context);
-                }
-            }
-        }
-        index = ii_last;
-    };
-
-    auto process_tokens = [&context, &process_for_loop](const compiled_template & toks, std::string & output){
-        for(int ii = 0; ii < toks.size(); ++ii)
+    process_tokens = [&process_tokens](const compiled_template & toks, std::string & output, const dict & context, int ii_start = 0, bool break_on_endfor = false){
+        bool loop_done = false;
+        int ii;
+        int ii_last = ii_start;
+        for(ii = ii_start; ii < toks.size(); ++ii)
         {
             switch(toks[ii]->token_type())
             {
@@ -317,7 +322,62 @@ std::string renderer::render(const compiled_template & toks, const dict & contex
                     std::shared_ptr<section_token> open_sec = std::dynamic_pointer_cast<section_token>(toks[ii]);
                     if(open_sec->params()[0] == "for")
                     {
-                        process_for_loop(toks, context, open_sec->params(), ii, output);
+                        // process the for loop
+                        dict for_context = context;
+                        std::vector<node> & array = boost::get<std::vector<node>>(for_context.at(open_sec->params()[3]));
+                        int index = 0;
+                        int size = array.size();
+                        dict loop_context = dict();
+                        loop_context["last"] = size - 1;
+                        loop_context["size"] = size;
+                        for(const node & _node: array)
+                        {
+                            loop_context["value"] = _node;
+                            loop_context["index"] = index + 1;
+                            loop_context["index_0"] = index;
+                            loop_context["is_first"] = index == 0;
+                            loop_context["is_last"] = index == size - 1;
+                            for_context[open_sec->params()[1]] = loop_context;
+                            ++index;
+                            ii_last = process_tokens(toks, output, for_context, ii + 1, true);
+                        }
+                        ii = ii_last;
+                    }
+                    else if(open_sec->params()[0] == "endfor")
+                    {
+                        ii_last = ii;
+                        loop_done = true;
+                        return ii_last;
+                    }
+                    else if(open_sec->params()[0] == "if")
+                    {
+                        int ii_param = 1;
+                        bool check_request = true;
+                        if(open_sec->params()[1] == "not")
+                        {
+                            check_request = false;
+                            ii_param++;
+                        }
+
+                        std::vector<std::string> keys = split(open_sec->params()[ii_param], '.');
+
+                        bool result = boost::apply_visitor(bool_check_node_visitor(keys), context.at(keys.at(0)));
+                        if(result != check_request)
+                        {
+                            // jump to else section
+                            std::shared_ptr<section_token> tmp_sec;
+                            int endif_index = get_next_section(toks, "endif", tmp_sec, ii);
+                            int else_index = get_next_section(toks, "else", tmp_sec, ii);
+                            if(else_index != -1 && else_index < endif_index)
+                                ii = else_index;
+                            else ii = endif_index;
+                        }
+                    }
+                    else if(open_sec->params()[0] == "else")
+                    {
+                        // jump to endif section
+                        std::shared_ptr<section_token> endif_sec;
+                        ii = get_next_section(toks, "endif", endif_sec, ii);
                     }
                 }
                 break;
@@ -325,8 +385,9 @@ std::string renderer::render(const compiled_template & toks, const dict & contex
                 output += toks[ii]->render(context);
             }
         }
+        return ii_last;
     };
-    process_tokens(toks, output);
+    process_tokens(toks, output, context, 0, false);
     return output;
 }
 

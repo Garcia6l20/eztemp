@@ -26,14 +26,14 @@ int main(int argc, char ** argv)
     std::cout <<
     ez::renderer::render("Hello {{ you }} !!\n"
                          "Today is {{ date() }}\n"
-                         "{# for guy in guys #}"
+                         "{% for guy in guys %}"
                          "{{ guy.name }} aged {{ guy.age }}.\n"
-                         "{# endfor #}"
-                         "{# for name in names #}"
-                         "{# for say in says #}"
+                         "{% endfor %}"
+                         "{% for name in names %}"
+                         "{% for say in says %}"
                          "- {{ toupper(name) }} says: {{ say }} !\n"
-                         "{# endfor #}"
-                         "{# endfor #}",
+                         "{% endfor %}"
+                         "{% endfor %}",
     {
         {"you", std::string("World")},
         {"guys", ez::array{
@@ -66,11 +66,11 @@ int main(int argc, char ** argv)
     // reder json example
     std::cout <<
     ez::renderer::render("Hello {{ you }} !!\n"
-                         "{# for name in names #}"
-                         "{# for say in says #}"
-                         "- {{ name }} says: {{ say }} !\n"
-                         "{# endfor #}"
-                         "{# endfor #}",
+                         "{% for name in names %}"
+                         "{% for say in says %}"
+                         "- {{ name }} says: {{ say }}{% if say.is_last %} !!! {% else %} !{% endif %}\n"
+                         "{% endfor %}"
+                         "{% endfor %}",
                          "{ \"you\": \"World\","
                          "  \"names\": [ \"toto\", \"titi\", \"tata\" ],"
                          "  \"says\": [ \"hello\", \"bye\" ]"
