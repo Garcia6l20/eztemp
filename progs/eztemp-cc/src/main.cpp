@@ -6,6 +6,7 @@
 #include <ctime>
 
 #include <boost/program_options.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 
 namespace po = boost::program_options;
 
@@ -33,7 +34,8 @@ std::string unescape(const std::string& s)
 }
 
 int main(int argc, char ** argv)
-{   try
+{
+    try
     {
         std::string input;
         std::string params = "{}";
@@ -78,9 +80,16 @@ int main(int argc, char ** argv)
         }
 
         input = unescape(vm["input"].as<std::string>());
+
         if(vm.count("params"))
         {
             params = unescape(vm["params"].as<std::string>());
+            if(boost::ends_with(params, ".json"))
+            {
+                // load it
+                std::ifstream fs(params);
+                params = std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>());
+            }
         }
 
         std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -90,7 +99,14 @@ int main(int argc, char ** argv)
             start = std::chrono::system_clock::now();
         }
 
-        *out << ez::renderer::render_json(input, params);
+        if(boost::ends_with(input, ".ez"))
+        {
+            *out << ez::temp::renderer::render_file(input, params);
+        }
+        else
+        {
+            *out << ez::temp::renderer::render(input, params);
+        }
 
         if(verbose)
         {
@@ -104,7 +120,7 @@ int main(int argc, char ** argv)
     }
     catch(std::exception & e)
     {
-        std::cerr << e.what() << std::endl;
+        std::cerr << "Compilation error: " << e.what() << std::endl;
     }
 
     return -1;

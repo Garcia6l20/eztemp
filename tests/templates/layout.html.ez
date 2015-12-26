@@ -1,0 +1,24 @@
+START OF LAYOUT
+
+TITLE:
+{% block title %}
+Default title
+{% endblock %}
+
+HEADER:
+{% block header %}
+Default header
+{% endblock %}
+
+CONTENT:
+{% block content %}
+Default content
+{% endblock %}
+
+FOOTER:
+{% block footer %}
+Default footer
+{% endblock %}
+
+END OF LAYOUT
+

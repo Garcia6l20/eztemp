@@ -1,0 +1,33 @@
+
+0 - this should not be rendered !
+
+{% extends layout.html %}
+
+1 - This should not be rendered !
+
+{% block title %}
+{{ who }} title !
+{% endblock %}
+
+2 - This should not be rendered !
+
+{% block header %}
+{{ who }} header !
+{% endblock %}
+
+3 - This should not be rendered !
+
+{% block content %}
+{{ who }} content !
+
+For new line:
+{% for item in list %}
+    - {{ loop.index0 }} : {{ item }} ({{ loop.last }})
+{% endfor %}
+
+For inline:
+
+{% for item in list %}{% if loop.first %} Items: {% endif %}{{ loop.index }} -> {{ item }}{% if not loop.last %}, {% else %} !{% endif %}{% endfor %}
+{% endblock %}
+
+4 - This should not be rendered !

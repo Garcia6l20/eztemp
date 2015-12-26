@@ -11,7 +11,9 @@ include(GenerateExportHeader)
 set(Boost_USE_STATIC_LIBS        ON)
 set(Boost_USE_MULTITHREADED      ON)
 
-find_package(Boost COMPONENTS date_time program_options regex REQUIRED)
+find_package(Boost COMPONENTS date_time program_options regex filesystem REQUIRED)
+
+add_definitions(-DBOOST_SYSTEM_NO_DEPRECATED)
 
 message(STATUS "Boost libraries: ${Boost_LIBRARIES}")
 
@@ -30,7 +32,9 @@ install(FILES ${hdr_files_pub} DESTINATION include/${PROJECT_NAME})
 
 target_include_directories(${PROJECT_NAME} PUBLIC include ${Boost_INCLUDE_DIR} ${CMAKE_BINARY_DIR})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${Boost_LIBRARIES})
-generate_export_header(${PROJECT_NAME})
+generate_export_header(${PROJECT_NAME} EXPORT_FILE_NAME ${CMAKE_BINARY_DIR}/include/${PROJECT_NAME}_export.h)
+
+include_directories(${CMAKE_BINARY_DIR}/include)
 
 include(CheckCXXCompilerFlag)
 CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
@@ -44,8 +48,8 @@ else()
 endif()
 
 add_subdirectory(progs)
-add_subdirectory(bindings)
-add_subdirectory(examples)
+#add_subdirectory(bindings)
+#add_subdirectory(examples)
 
 include(CTest)
 
