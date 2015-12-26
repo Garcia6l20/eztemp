@@ -33,3 +33,63 @@ make check
 sudo make install
 ```
 
+## Usage
+
+### In code
+
+For in code examples check the `examples/helloworld` example.
+
+### Compiler
+
+- `layout.txt.ez`:
+
+```txt
+Header:
+{% block header %}
+This is my default header.
+{% endblock %}
+
+Content:
+{% block content %}
+This is my default content.
+{% endblock %}
+```
+
+- `template.txt.ez`:
+
+```txt
+{% extends layout.txt %}
+{% block content %}
+My actual content:
+{% for item in items %}
+  - {{ loop.index }}: {{ item }} {% if loop.last %} !!!{% endif %}
+{% endfor %}
+{% endblock %}
+```
+
+- `params.json`:
+
+```json
+{
+  "items": [ "Big", "Bad", "Wolf" ]
+}
+```
+
+Then run:
+
+```bash
+eztemp-cc template.txt.ez -p params.json out.txt
+```
+
+- `out.txt`:
+
+```txt
+Header:
+This is my default header.
+
+Content:
+My actual content:
+  - 1: Big
+  - 2: Bad
+  - 3: Wolf  !!!
+```

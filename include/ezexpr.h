@@ -217,11 +217,11 @@ bool parse(Iterator &iter,
 }
 
 template <typename T>
-T eval(const std::string & input, const dict & context)
+T eval(const std::string & input, const ez::temp::dict & context)
 {
     T result;
     grammar<T,std::string::const_iterator> eg;
-    std::for_each(context.begin(), context.end(), [&eg](const std::pair<std::string, node> & item){
+    std::for_each(context.begin(), context.end(), [&eg](const std::pair<std::string, ez::temp::node> & item){
         try
         {
             eg.locals.add(item.first, boost::get<T>(item.second));

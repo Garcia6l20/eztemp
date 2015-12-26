@@ -29,6 +29,7 @@ using node = boost::make_recursive_variant<
     std::nullptr_t, std::string, int, double, bool,
     std::vector<boost::recursive_variant_>,
     std::map<const std::string, boost::recursive_variant_>>::type;
+
 /**
  * @brief EZ Array
  * A list (vector) of nodes.
@@ -52,136 +53,9 @@ public:
     static dict from_json(const std::string & json);
 };
 
-class render_node_visitor: public boost::static_visitor<std::string>
-{
-public:
-    render_node_visitor(const std::vector<std::string> & keys, int level = 1): boost::static_visitor<std::string>(), m_keys(keys), m_level(level) {}
-    std::string operator()(std::nullptr_t) const
-    {
-        return "null";
-    }
-    std::string operator()(int val) const
-    {
-        return std::to_string(val);
-    }
-    std::string operator()(double val) const
-    {
-        return std::to_string(val);
-    }
-    std::string operator()(bool val) const
-    {
-        return val ? "true" : "false";
-    }
-    std::string operator()(const std::string & val) const
-    {
-        return val;
-    }
-    std::string operator ()(const std::map<const std::string, node> & map) const
-    {
-        if(m_keys.size() == 1)
-        {
-            // try to get the "value" key
-            return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at("value"));
-        }
-        else
-        {
-            return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
-        }
-    }
-    std::string operator ()(const node & var) const
-    {
-        return "";
-    }
-    std::string operator ()(const std::map<const std::string, boost::recursive_variant_> & var) const
-    {
-        return "";
-    }
-    template <typename T, typename U>
-    std::string operator()( const T &, const U & ) const
-    {
-        return "";
-    }
-    template <typename T>
-    std::string operator()( const T & lhs, const T & rhs ) const
-    {
-        return "";
-    }
-
-    /*
-    std::string operator()(const std::map<const std::string, boost::recursive_variant_> & val) const
-    {
-        return "Cannot render dict";//return boost::apply_visitor(render_node_visitor(), val);
-    }*/
-private:
-    std::vector<std::string> m_keys;
-    int m_level;
-};
-
-class bool_check_node_visitor: public boost::static_visitor<bool>
-{
-public:
-    bool_check_node_visitor(const std::vector<std::string> & keys, int level = 1): boost::static_visitor<bool>(), m_keys(keys), m_level(level) {}
-    bool operator()(std::nullptr_t) const
-    {
-        return false;
-    }
-    bool operator()(int val) const
-    {
-        return val != 0;
-    }
-    bool operator()(double val) const
-    {
-        return val != 0.0;
-    }
-    bool operator()(bool val) const
-    {
-        return val;
-    }
-    bool operator()(const std::string & val) const
-    {
-        if(val == "true")
-            return true;
-        else if(val == "false")
-            return false;
-        else throw std::runtime_error("Not a boolean string");
-    }
-    bool operator ()(const std::map<const std::string, node> & map) const
-    {
-        if(m_keys.size() == 1)
-        {
-            // try to get the "value" key
-            return boost::apply_visitor(bool_check_node_visitor(m_keys, m_level + 1), map.at("value"));
-        }
-        else
-        {
-            return boost::apply_visitor(bool_check_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
-        }
-    }
-    bool operator ()(const node & var) const
-    {
-        throw std::runtime_error("Not a boolean");
-    }
-    bool operator ()(const std::map<const std::string, boost::recursive_variant_> & var) const
-    {
-        throw std::runtime_error("Not a boolean");
-    }
-    template <typename T, typename U>
-    bool operator()( const T &, const U & ) const
-    {
-        throw std::runtime_error("Not a boolean");
-    }
-    template <typename T>
-    bool operator()( const T & lhs, const T & rhs ) const
-    {
-        throw std::runtime_error("Not a boolean");
-    }
-private:
-    std::vector<std::string> m_keys;
-    int m_level;
-};
-
-using delim_type = std::pair<std::string, std::string>;
-
+/**
+ * @brief The token class
+ **/
 class token
 {
 public:
@@ -206,6 +80,9 @@ inline std::vector<std::string> split(const std::string &text, char sep) {
   return tokens;
 }
 
+/**
+ * @brief The text_token class
+ **/
 class text_token : public token
 {
 public:
@@ -215,38 +92,16 @@ private:
     std::string m_text;
 };
 
+/**
+ * @brief The render_token class
+ **/
 class render_token : public token
 {
 public:
-    render_token(const std::string & content):
-        token(token::type::render),
-        m_content(std::string(content.begin() + m_start_tag.size(), content.end() - m_end_tag.size()))
-    {}
+    render_token(const std::string & content);
     std::string render(const dict& context) override;
-    static bool is_token_start(const std::string & text) {
-        return text.substr(0, m_start_tag.size()) == m_start_tag;
-    }
-    static bool is_token_end(const std::string & text) {
-        return text.substr(0, m_end_tag.size()) == m_end_tag;
-    }
-    static bool is_start(std::string::const_iterator start, const std::string::const_iterator & end)
-    {
-        for(std::string::const_iterator it = m_start_tag.begin(); it < m_start_tag.end(); ++it, ++start)
-        {
-            if((*it) != *(start))
-                return false;
-        }
-        return true;
-    }
-    static bool is_end(std::string::const_iterator start, const std::string::const_iterator & end)
-    {
-        for(std::string::const_iterator it = m_end_tag.begin(); it < m_end_tag.end(); ++it, ++start)
-        {
-            if((*it) != *(start))
-                return false;
-        }
-        return true;
-    }
+    static bool is_start(std::string::const_iterator start, const std::string::const_iterator & end);
+    static bool is_end(std::string::const_iterator start, const std::string::const_iterator & end);
     static inline const std::string & start_tag() { return m_start_tag; }
     static inline const std::string & end_tag() { return m_end_tag; }
 private:
@@ -255,49 +110,17 @@ private:
     static std::string m_end_tag;
 };
 
+/**
+ * @brief The section_token class
+ **/
 class section_token : public token
 {
 public:
-    section_token(const std::string & content):
-        token(token::type::section),
-        m_content(std::string(content.begin() + m_start_tag.size(), content.end() - m_end_tag.size()))
-    {
-        m_params = split(m_content, ' ');
-
-        // remove all white spaces
-        std::for_each(m_params.begin(), m_params.end(), [](std::string & str){
-            str.erase(std::remove(str.begin(), str.end(), ' '), str.end());
-        });
-
-        // remove all blank params
-        m_params.erase(std::remove(m_params.begin(), m_params.end(), ""), m_params.end());
-    }
+    section_token(const std::string & content);
     std::string render(const dict& context) override { return ""; }
-    const std::vector<std::string> & params() const { return m_params; }
-    static bool is_token_start(const std::string & text) {
-        return text.substr(0, m_start_tag.size()) == m_start_tag;
-    }
-    static bool is_token_end(const std::string & text) {
-        return text.substr(0, m_end_tag.size()) == m_end_tag;
-    }
-    static bool is_start(std::string::const_iterator start, const std::string::const_iterator & end)
-    {
-        for(std::string::const_iterator it = m_start_tag.begin(); it < m_start_tag.end(); ++it, ++start)
-        {
-            if((*it) != *(start))
-                return false;
-        }
-        return true;
-    }
-    static bool is_end(std::string::const_iterator start, const std::string::const_iterator & end)
-    {
-        for(std::string::const_iterator it = m_end_tag.begin(); it < m_end_tag.end(); ++it, ++start)
-        {
-            if((*it) != *(start))
-                return false;
-        }
-        return true;
-    }
+    inline const std::vector<std::string> & params() const { return m_params; }
+    static bool is_start(std::string::const_iterator start, const std::string::const_iterator & end);
+    static bool is_end(std::string::const_iterator start, const std::string::const_iterator & end);
     static inline const std::string & start_tag() { return m_start_tag; }
     static inline const std::string & end_tag() { return m_end_tag; }
 private:
@@ -307,44 +130,90 @@ private:
     static std::string m_end_tag;
 };
 
+/**
+ * @brief List of rendering tokens.
+ **/
 using compiled_template = std::vector<std::shared_ptr<token>>;
 
+/**
+ * @brief The renderer class.
+ */
 class EZTEMP_EXPORT renderer
 {
 public:
+    /**
+     * @brief Compile a template string.
+     * @param input The input string.
+     * @param path  The path to find extends templates.
+     * @return The compiled template.
+     **/
     static compiled_template compile(const std::string & input, const std::string & path = "");
+
+    /**
+     * @brief Compile a template file.
+     * @param filepath  The path of the template file.
+     * @return The compiled template.
+     **/
     static compiled_template compile_file(const std::string & filepath);
 
-    static std::string render_file(const std::string & input, const std::string & context);
-    static std::string render(const std::string & input, const dict & context);
     /**
-     * @brief Json context rendering
-     * @param input     Template string.
-     * @param context   Parameters (Json string).
-     * @return The built template.
+     * @brief Render a template file.
+     * @param filepath  The path of the template file.
+     * @param context   The context as Json string.
+     * @return The rendered template.
+     **/
+    static std::string render_file(const std::string & filepath, const std::string & context);
+
+    /**
+     * @brief Render a template string.
+     * @param input     The input string.
+     * @param context   The context dictionnary.
+     * @return The rendered template.
+     **/
+    static std::string render(const std::string & input, const dict & context = dict());
+
+    /**
+     * @brief Render a template string.
+     * @param input     The input string.
+     * @param context   The context as Json string.
+     * @return The rendered template.
      **/
     static std::string render(const std::string & input, const std::string & context);
+
+    /**
+     * @brief Render a compiled template.
+     * @param input     The compiled template.
+     * @param context   The context dictionnary.
+     * @return The rendered template.
+     */
     static std::string render(const ez::temp::compiled_template & input, const dict & context);
 
+    /**
+     * @brief Template rendering function definition.
+     **/
     using render_function = std::function<std::string(const array)>;
 
-    static std::map<std::string, render_function> m_functions;
-
+    /**
+     * @brief Add a template rendering function.
+     * @param key       The key name of the given function.
+     * @param function  The function to execute.
+     **/
     static void add_function(const std::string & key, const render_function & function)
     {
         m_functions[key] = function;
     }
 
+private:
+
     static std::string call_function(const std::string & key, const array & nodes)
     {
         return m_functions[key](nodes);
     }
-};
 
-inline void remove_whitespaces(std::string & str){
-    str.erase(std::remove(str.begin(), str.end(), ' '), str.end());
-    str.erase(std::remove(str.begin(), str.end(), '\t'), str.end());
-}
+    static std::map<std::string, render_function> m_functions;
+
+    friend class render_token; // allow render_token to use call_function.
+};
 
 } // namespace temp
 

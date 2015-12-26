@@ -22,13 +22,12 @@
 
 For new line:
 {% for item in list %}
-    - {{ item.index_0 }} : {{ item }} ({{ item.is_last }})
+    - {{ loop.index0 }} : {{ item }} ({{ loop.last }})
 {% endfor %}
 
 For inline:
-    
-{% for item in list %}{% if item.is_first %} Items: {% endif %}{{ item.index }} -> {{ item }}{% if not item.is_last %}, {% else %} !{% endif %}{% endfor %}
+
+{% for item in list %}{% if loop.first %} Items: {% endif %}{{ loop.index }} -> {{ item }}{% if not loop.last %}, {% else %} !{% endif %}{% endfor %}
 {% endblock %}
 
 4 - This should not be rendered !
-

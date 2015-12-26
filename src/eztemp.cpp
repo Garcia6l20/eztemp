@@ -30,10 +30,294 @@ std::string render_token::m_end_tag = "}}";
 std::string section_token::m_start_tag = "{%";
 std::string section_token::m_end_tag = "%}";
 
+/**
+ * @brief The render_node_visitor class
+ **/
+class render_node_visitor: public boost::static_visitor<std::string>
+{
+public:
+    render_node_visitor(const std::vector<std::string> & keys, int level = 1): boost::static_visitor<std::string>(), m_keys(keys), m_level(level) {}
+    std::string operator()(std::nullptr_t) const
+    {
+        return "null";
+    }
+    std::string operator()(int val) const
+    {
+        return std::to_string(val);
+    }
+    std::string operator()(double val) const
+    {
+        return std::to_string(val);
+    }
+    std::string operator()(bool val) const
+    {
+        return val ? "true" : "false";
+    }
+    std::string operator()(const std::string & val) const
+    {
+        return val;
+    }
+    std::string operator ()(const std::map<const std::string, node> & map) const
+    {
+        /*if(m_keys.size() == 1)
+        {
+            // try to get the "value" key
+            return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at("value"));
+        }
+        else
+        {
+            try
+            {
+                const node & n = map.at("value");
+                return boost::apply_visitor(render_node_visitor(m_keys, m_level), n);
+            }
+            catch(std::out_of_range & e)
+            {*/
+                return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
+            /*}
+        }*/
+    }
+    std::string operator ()(const node & var) const
+    {
+        return "";
+    }
+    std::string operator ()(const std::map<const std::string, boost::recursive_variant_> & var) const
+    {
+        return "";
+    }
+    template <typename T, typename U>
+    std::string operator()( const T &, const U & ) const
+    {
+        return "";
+    }
+    template <typename T>
+    std::string operator()( const T & lhs, const T & rhs ) const
+    {
+        return "";
+    }
+private:
+    std::vector<std::string> m_keys;
+    int m_level;
+};
+
+/**
+ * @brief The bool_check_node_visitor class
+ **/
+class bool_check_node_visitor: public boost::static_visitor<bool>
+{
+public:
+    bool_check_node_visitor(const std::vector<std::string> & keys, int level = 1): boost::static_visitor<bool>(), m_keys(keys), m_level(level) {}
+    bool operator()(std::nullptr_t) const
+    {
+        return false;
+    }
+    bool operator()(int val) const
+    {
+        return val != 0;
+    }
+    bool operator()(double val) const
+    {
+        return val != 0.0;
+    }
+    bool operator()(bool val) const
+    {
+        return val;
+    }
+    bool operator()(const std::string & val) const
+    {
+        if(val == "true")
+            return true;
+        else if(val == "false")
+            return false;
+        else throw std::runtime_error("Not a boolean string");
+    }
+    bool operator ()(const std::map<const std::string, node> & map) const
+    {
+        /*if(m_keys.size() == 1)
+        {
+            // try to get the "value" key
+            return boost::apply_visitor(bool_check_node_visitor(m_keys, m_level + 1), map.at("value"));
+        }
+        else
+        {*/
+            return boost::apply_visitor(bool_check_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
+        //}
+    }
+    bool operator ()(const node & var) const
+    {
+        throw std::runtime_error("Not a boolean");
+    }
+    bool operator ()(const std::map<const std::string, boost::recursive_variant_> & var) const
+    {
+        throw std::runtime_error("Not a boolean");
+    }
+    template <typename T, typename U>
+    bool operator()( const T &, const U & ) const
+    {
+        throw std::runtime_error("Not a boolean");
+    }
+    template <typename T>
+    bool operator()( const T & lhs, const T & rhs ) const
+    {
+        throw std::runtime_error("Not a boolean");
+    }
+private:
+    std::vector<std::string> m_keys;
+    int m_level;
+};
+
+/**
+ * @brief remove_whitespaces
+ * @param str
+ */
+inline void remove_whitespaces(std::string & str)
+{
+    str.erase(std::remove(str.begin(), str.end(), ' '), str.end());
+    str.erase(std::remove(str.begin(), str.end(), '\t'), str.end());
+}
+
+/**
+ * @brief get_next_section
+ * @param tokens
+ * @param name
+ * @param section
+ * @param start_index
+ * @return
+ */
+inline static
+int get_next_section(const compiled_template & tokens, const std::string & name, std::shared_ptr<section_token> & section,int start_index = 0)
+{
+    for(int ii = start_index; ii < tokens.size(); ++ii)
+    {
+        if(tokens[ii]->token_type() == token::type::section)
+        {
+            section = std::dynamic_pointer_cast<section_token>(tokens[ii]);
+            if(section->params()[0] == name)
+            {
+                return ii;
+            }
+        }
+    }
+    return -1;
+}
+
+/**
+ * @brief get_next_block
+ * @param list
+ * @param start_index
+ * @param block_name
+ * @return
+ */
+inline static
+int get_next_block(compiled_template & list, int start_index, std::string & block_name)
+{
+    std::shared_ptr<section_token> section;
+    int index;
+    if((index = get_next_section(list, "block", section, start_index)) != -1)
+    {
+        block_name = section->params()[1];
+        return index;
+    }
+    else return -1;
+}
+
+/**
+ * @brief get_next_endblock
+ * @param list
+ * @param start_index
+ * @return
+ */
+inline static
+int get_next_endblock(compiled_template & list, int start_index)
+{
+    std::shared_ptr<section_token> section;
+    int index;
+    if((index = get_next_section(list, "endblock", section, start_index)) != -1)
+    {
+        return index;
+    }
+    else return -1;
+}
+
+/**
+ * @brief get_named_block
+ * @param list
+ * @param block_name
+ * @return
+ */
+inline static
+int get_named_block (compiled_template & list,std::string block_name)
+{
+    std::shared_ptr<section_token> section;
+    int index = 0;
+    while((index = get_next_section(list, "block", section, index)) != -1)
+    {
+        if(block_name == section->params()[1])
+            return index;
+        index += 1;
+    }
+    return -1;
+}
+
+// --------------------------------------------
+// dict stuff
+//
+
+dict dict::from_json(const std::string &json)
+{
+    dict context;
+
+    std::stringstream ss;
+    ss << json;
+    boost::property_tree::ptree pt;
+    boost::property_tree::read_json(ss, pt);
+    using boost::property_tree::ptree;
+    std::function<void(const std::string&, ptree&, dict &, const std::string&)> parse_node;
+    parse_node = [&parse_node](const std::string& key, ptree & pt, dict & context, const std::string& parent_key){
+        if(pt.empty())
+        {
+            if(key.empty())
+            {
+                if(context.find(parent_key) != context.end())
+                {
+                    boost::get<std::vector<node>>(context[parent_key]).push_back(pt.data());
+                }
+                else
+                {
+                    context[parent_key] = std::vector<node>{pt.data()};
+                }
+            }
+            else
+            {
+                context[key] = pt.data();
+            }
+        }
+        else
+        {
+            for (ptree::iterator node = pt.begin(); node != pt.end(); ++node)
+            {
+                parse_node(node->first, node->second, context, key);
+            }
+        }
+    };
+
+    parse_node("", pt, context, "");
+    return context;
+}
+
+// --------------------------------------------
+// render_token stuff
+//
+
+render_token::render_token(const std::string & content):
+    token(token::type::render),
+    m_content(std::string(content.begin() + m_start_tag.size(), content.end() - m_end_tag.size()))
+{}
+
 std::string render_token::render(const dict & context){
    std::string full_key = m_content;
    remove_whitespaces(full_key);
-   static const boost::regex expr("([a-zA-Z]+)\\((.*)\\)$");
+   static const boost::regex expr("([a-zA-Z_]+)\\((.*)\\)$");
    boost::cmatch what;
    if(boost::regex_match(full_key.c_str(), what, expr))
    {
@@ -59,66 +343,75 @@ std::string render_token::render(const dict & context){
    }
 }
 
+bool render_token::is_start(std::string::const_iterator start, const std::string::const_iterator & end)
+{
+    for(std::string::const_iterator it = m_start_tag.begin(); it < m_start_tag.end(); ++it, ++start)
+    {
+        if((*it) != *(start))
+            return false;
+    }
+    return true;
+}
+bool render_token::is_end(std::string::const_iterator start, const std::string::const_iterator & end)
+{
+    for(std::string::const_iterator it = m_end_tag.begin(); it < m_end_tag.end(); ++it, ++start)
+    {
+        if((*it) != *(start))
+            return false;
+    }
+    return true;
+}
+
+// --------------------------------------------
+// section_token stuff
+//
+
+section_token::section_token(const std::string & content):
+    token(token::type::section),
+    m_content(std::string(content.begin() + m_start_tag.size(), content.end() - m_end_tag.size()))
+{
+    m_params = split(m_content, ' ');
+
+    // remove all white spaces
+    std::for_each(m_params.begin(), m_params.end(), [](std::string & str){
+        str.erase(std::remove(str.begin(), str.end(), ' '), str.end());
+    });
+
+    // remove all blank params
+    m_params.erase(std::remove(m_params.begin(), m_params.end(), ""), m_params.end());
+}
+
+bool section_token::is_start(std::string::const_iterator start, const std::string::const_iterator & end)
+{
+    for(std::string::const_iterator it = m_start_tag.begin(); it < m_start_tag.end(); ++it, ++start)
+    {
+        if((*it) != *(start))
+            return false;
+    }
+    return true;
+}
+
+bool section_token::is_end(std::string::const_iterator start, const std::string::const_iterator & end)
+{
+    for(std::string::const_iterator it = m_end_tag.begin(); it < m_end_tag.end(); ++it, ++start)
+    {
+        if((*it) != *(start))
+            return false;
+    }
+    return true;
+}
+
+// --------------------------------------------
+// renderer stuff
+//
+
 compiled_template renderer::compile_file(const std::string &file_path)
 {
     std::ifstream fs(file_path);
-    return compile(std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>()), boost::filesystem::path(file_path).remove_filename().string());
-}
-
-inline static
-int get_next_section(const compiled_template & tokens, const std::string & name, std::shared_ptr<section_token> & section,int start_index = 0)
-{
-    for(int ii = start_index; ii < tokens.size(); ++ii)
-    {
-        if(tokens[ii]->token_type() == token::type::section)
-        {
-            section = std::dynamic_pointer_cast<section_token>(tokens[ii]);
-            if(section->params()[0] == name)
-            {
-                return ii;
-            }
-        }
-    }
-    return -1;
-}
-
-inline static
-int get_next_block(compiled_template & list, int start_index, std::string & block_name)
-{
-    std::shared_ptr<section_token> section;
-    int index;
-    if((index = get_next_section(list, "block", section, start_index)) != -1)
-    {
-        block_name = section->params()[1];
-        return index;
-    }
-    else return -1;
-}
-
-inline static
-int get_next_endblock(compiled_template & list, int start_index)
-{
-    std::shared_ptr<section_token> section;
-    int index;
-    if((index = get_next_section(list, "endblock", section, start_index)) != -1)
-    {
-        return index;
-    }
-    else return -1;
-}
-
-inline static
-int get_named_block (compiled_template & list,std::string block_name)
-{
-    std::shared_ptr<section_token> section;
-    int index = 0;
-    while((index = get_next_section(list, "block", section, index)) != -1)
-    {
-        if(block_name == section->params()[1])
-            return index;
-        index += 1;
-    }
-    return -1;
+    std::string path = boost::filesystem::path(file_path).remove_filename().string();
+    if(path.empty())
+        path = ".";
+    return compile(std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>()), path);
 }
 
 compiled_template renderer::compile(const std::string &input, const std::string & path)
@@ -172,7 +465,10 @@ compiled_template renderer::compile(const std::string &input, const std::string 
                             for(std::string::const_iterator it = it_start - dist + 1; it < it_start; ++it)
                             {
                                 if((*it) != ' ' && (*it) != '\t')
-                                    remove = false; break;
+                                {
+                                    remove = false;
+                                    break;
+                                }
                             }
                         }
                         else remove = false;
@@ -243,48 +539,6 @@ compiled_template renderer::compile(const std::string &input, const std::string 
     return tokens;
 }
 
-dict dict::from_json(const std::string &json)
-{
-    dict context;
-
-    std::stringstream ss;
-    ss << json;
-    boost::property_tree::ptree pt;
-    boost::property_tree::read_json(ss, pt);
-    using boost::property_tree::ptree;
-    std::function<void(const std::string&, ptree&, dict &, const std::string&)> parse_node;
-    parse_node = [&parse_node](const std::string& key, ptree & pt, dict & context, const std::string& parent_key){
-        if(pt.empty())
-        {
-            if(key.empty())
-            {
-                if(context.find(parent_key) != context.end())
-                {
-                    boost::get<std::vector<node>>(context[parent_key]).push_back(pt.data());
-                }
-                else
-                {
-                    context[parent_key] = std::vector<node>{pt.data()};
-                }
-            }
-            else
-            {
-                context[key] = pt.data();
-            }
-        }
-        else
-        {
-            for (ptree::iterator node = pt.begin(); node != pt.end(); ++node)
-            {
-                parse_node(node->first, node->second, context, key);
-            }
-        }
-    };
-
-    parse_node("", pt, context, "");
-    return context;
-}
-
 std::string renderer::render(const std::string & input, const std::string & context)
 {
     return render(input, dict::from_json(context));
@@ -306,10 +560,10 @@ std::string renderer::render(const compiled_template & toks, const dict & contex
 {
     std::string output;
 
-    using process_tokens_func = std::function<int(const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor)>;
+    using process_tokens_func = std::function<int(const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx)>;
     process_tokens_func process_tokens;
 
-    process_tokens = [&process_tokens](const compiled_template & toks, std::string & output, const dict & context, int ii_start = 0, bool break_on_endfor = false){
+    process_tokens = [&process_tokens](const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx){
         bool loop_done = false;
         int ii;
         int ii_last = ii_start;
@@ -328,18 +582,20 @@ std::string renderer::render(const compiled_template & toks, const dict & contex
                         int index = 0;
                         int size = array.size();
                         dict loop_context = dict();
-                        loop_context["last"] = size - 1;
-                        loop_context["size"] = size;
+                        loop_context["length"] = size;
+                        loop_context["parent"] = parent_loop_ctx;
                         for(const node & _node: array)
                         {
-                            loop_context["value"] = _node;
                             loop_context["index"] = index + 1;
-                            loop_context["index_0"] = index;
-                            loop_context["is_first"] = index == 0;
-                            loop_context["is_last"] = index == size - 1;
-                            for_context[open_sec->params()[1]] = loop_context;
+                            loop_context["index0"] = index;
+                            loop_context["first"] = index == 0;
+                            loop_context["last"] = index == size - 1;
+                            loop_context["revindex"] = size - index;
+                            loop_context["revindex0"] = size - index - 1;
+                            for_context["loop"] = loop_context;
+                            for_context[open_sec->params()[1]] = _node;
                             ++index;
-                            ii_last = process_tokens(toks, output, for_context, ii + 1, true);
+                            ii_last = process_tokens(toks, output, for_context, ii + 1, true, loop_context);
                         }
                         ii = ii_last;
                     }
@@ -387,10 +643,14 @@ std::string renderer::render(const compiled_template & toks, const dict & contex
         }
         return ii_last;
     };
-    process_tokens(toks, output, context, 0, false);
+    process_tokens(toks, output, context, 0, false, dict());
     return output;
 }
 
+
+// -----------------------------------------
+// renderer functions registration
+//
 
 static bool register_functions()
 {
