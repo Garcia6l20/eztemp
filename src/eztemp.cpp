@@ -59,27 +59,11 @@ public:
     }
     std::string operator ()(const std::map<const std::string, node> & map) const
     {
-        /*if(m_keys.size() == 1)
-        {
-            // try to get the "value" key
-            return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at("value"));
-        }
-        else
-        {
-            try
-            {
-                const node & n = map.at("value");
-                return boost::apply_visitor(render_node_visitor(m_keys, m_level), n);
-            }
-            catch(std::out_of_range & e)
-            {*/
-                return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
-            /*}
-        }*/
+        return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
     }
-    std::string operator ()(const node & var) const
+    std::string operator ()(const array & var) const
     {
-        return "";
+        throw renderer::render_exception("Tho shall not render an array !!!");
     }
     std::string operator ()(const std::map<const std::string, boost::recursive_variant_> & var) const
     {
@@ -98,6 +82,54 @@ public:
 private:
     std::vector<std::string> m_keys;
     int m_level;
+};
+
+
+class get_type_node_visitor: public boost::static_visitor<std::string>
+{
+public:
+    std::string operator()(std::nullptr_t) const
+    {
+        return "nullptr_t";
+    }
+    std::string operator()(int val) const
+    {
+        return "int";
+    }
+    std::string operator()(double val) const
+    {
+        return "double";
+    }
+    std::string operator()(bool val) const
+    {
+        return "bool";
+    }
+    std::string operator()(const std::string & val) const
+    {
+        return "string";
+    }
+    std::string operator ()(const std::map<const std::string, node> & map) const
+    {
+        return "dict";
+    }
+    std::string operator ()(const array & var) const
+    {
+        return "array";
+    }
+    /*std::string operator ()(const std::map<const std::string, boost::recursive_variant_> & var) const
+    {
+        return "";
+    }*/
+    template <typename T, typename U>
+    std::string operator()( const T &, const U & ) const
+    {
+        return "unknown";
+    }
+    template <typename T>
+    std::string operator()( const T & lhs, const T & rhs ) const
+    {
+        return "unknown";
+    }
 };
 
 /**
@@ -338,7 +370,7 @@ std::string render_token::render(const dict & context){
    }
    else
    {
-       std::vector<std::string> keys = split(full_key, '.');
+       const std::vector<std::string> keys = split(full_key, '.');
        return boost::apply_visitor(render_node_visitor(keys), context.at(keys.at(0)));
    }
 }
@@ -555,30 +587,35 @@ std::string renderer::render_file(const std::string & input, const std::string &
     return render(compile_file(input), dict::from_json(context));
 }
 
-
-std::string renderer::render(const compiled_template & toks, const dict & context)
+int process_tokens(const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx)
 {
-    std::string output;
+    bool loop_done = false;
+    int ii;
+    int ii_last = ii_start;
 
-    using process_tokens_func = std::function<int(const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx)>;
-    process_tokens_func process_tokens;
-
-    process_tokens = [&process_tokens](const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx){
-        bool loop_done = false;
-        int ii;
-        int ii_last = ii_start;
-        for(ii = ii_start; ii < toks.size(); ++ii)
+    for(ii = ii_start; ii < toks.size(); ++ii)
+    {
+        switch(toks[ii]->token_type())
         {
-            switch(toks[ii]->token_type())
+        case token::type::section:
             {
-            case token::type::section:
+                std::shared_ptr<section_token> open_sec = std::dynamic_pointer_cast<section_token>(toks[ii]);
+                if(open_sec->params()[0] == "for")
                 {
-                    std::shared_ptr<section_token> open_sec = std::dynamic_pointer_cast<section_token>(toks[ii]);
-                    if(open_sec->params()[0] == "for")
+                    // process the for loop
+                    dict for_context = context;
+                    std::vector<std::string> container_id = split(open_sec->params()[3], '.');
+
+                    try
                     {
-                        // process the for loop
-                        dict for_context = context;
-                        std::vector<node> & array = boost::get<std::vector<node>>(for_context.at(open_sec->params()[3]));
+                        node tmp_node = for_context.at(container_id[0]);
+                        for (int ii = 1; ii < container_id.size(); ++ii)
+                        {
+                            std::map<const std::string, node> d = boost::get<std::map<const std::string, node>>(tmp_node);
+                            tmp_node = d.at(container_id[ii]);
+                        }
+
+                        ez::temp::array & array = boost::get<std::vector<node>>(tmp_node);
                         int index = 0;
                         int size = array.size();
                         dict loop_context = dict();
@@ -594,55 +631,72 @@ std::string renderer::render(const compiled_template & toks, const dict & contex
                             loop_context["revindex0"] = size - index - 1;
                             for_context["loop"] = loop_context;
                             for_context[open_sec->params()[1]] = _node;
+
                             ++index;
                             ii_last = process_tokens(toks, output, for_context, ii + 1, true, loop_context);
                         }
                         ii = ii_last;
+                    } catch(const std::out_of_range& e) {
+                        std::stringstream ss;
+                        ss << "ez::temp::render: array not found:\"" << open_sec->params()[3] << "\"" << std::endl;
+                        throw renderer::render_exception(ss.str().c_str());
+                    } catch(const boost::bad_get& e) {
+                        std::stringstream ss;
+                        ss << "ez::temp::render: \"" << open_sec->params()[3] << "\" is not an array" << std::endl;
+                        throw renderer::render_exception(ss.str().c_str());
                     }
-                    else if(open_sec->params()[0] == "endfor")
-                    {
-                        ii_last = ii;
-                        loop_done = true;
-                        return ii_last;
-                    }
-                    else if(open_sec->params()[0] == "if")
-                    {
-                        int ii_param = 1;
-                        bool check_request = true;
-                        if(open_sec->params()[1] == "not")
-                        {
-                            check_request = false;
-                            ii_param++;
-                        }
 
-                        std::vector<std::string> keys = split(open_sec->params()[ii_param], '.');
-
-                        bool result = boost::apply_visitor(bool_check_node_visitor(keys), context.at(keys.at(0)));
-                        if(result != check_request)
-                        {
-                            // jump to else section
-                            std::shared_ptr<section_token> tmp_sec;
-                            int endif_index = get_next_section(toks, "endif", tmp_sec, ii);
-                            int else_index = get_next_section(toks, "else", tmp_sec, ii);
-                            if(else_index != -1 && else_index < endif_index)
-                                ii = else_index;
-                            else ii = endif_index;
-                        }
-                    }
-                    else if(open_sec->params()[0] == "else")
+                }
+                else if(open_sec->params()[0] == "endfor")
+                {
+                    ii_last = ii;
+                    loop_done = true;
+                    return ii_last;
+                }
+                else if(open_sec->params()[0] == "if")
+                {
+                    int ii_param = 1;
+                    bool check_request = true;
+                    if(open_sec->params()[1] == "not")
                     {
-                        // jump to endif section
-                        std::shared_ptr<section_token> endif_sec;
-                        ii = get_next_section(toks, "endif", endif_sec, ii);
+                        check_request = false;
+                        ii_param++;
+                    }
+
+                    std::vector<std::string> keys = split(open_sec->params()[ii_param], '.');
+
+                    bool result = boost::apply_visitor(bool_check_node_visitor(keys), context.at(keys.at(0)));
+                    if(result != check_request)
+                    {
+                        // jump to else section
+                        std::shared_ptr<section_token> tmp_sec;
+                        int endif_index = get_next_section(toks, "endif", tmp_sec, ii);
+                        int else_index = get_next_section(toks, "else", tmp_sec, ii);
+                        if(else_index != -1 && else_index < endif_index)
+                            ii = else_index;
+                        else ii = endif_index;
                     }
                 }
-                break;
-            default:
+                else if(open_sec->params()[0] == "else")
+                {
+                    // jump to endif section
+                    std::shared_ptr<section_token> endif_sec;
+                    ii = get_next_section(toks, "endif", endif_sec, ii);
+                }
+            }
+            break;
+        default:
+            {
                 output += toks[ii]->render(context);
             }
         }
-        return ii_last;
-    };
+    }
+    return ii_last;
+}
+
+std::string renderer::render(const compiled_template & toks, const dict & context)
+{
+    std::string output;
     process_tokens(toks, output, context, 0, false, dict());
     return output;
 }
