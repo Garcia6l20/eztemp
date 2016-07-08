@@ -141,6 +141,16 @@ using compiled_template = std::vector<std::shared_ptr<token>>;
 class EZTEMP_EXPORT renderer
 {
 public:
+
+    class render_exception: public std::runtime_error
+    {
+    public:
+        render_exception(const char * what):
+            std::runtime_error(what)
+        {
+        }
+    };
+
     /**
      * @brief Compile a template string.
      * @param input The input string.
