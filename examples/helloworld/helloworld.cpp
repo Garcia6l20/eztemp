@@ -6,10 +6,10 @@
 int main(int argc, char ** argv)
 {
     // eval example
-    std::cout << ez::expr::eval<double>("10+num", {{"num", double{2}}}) << std::endl;
+    std::cout << ez::expr::eval<double>("40+num", {{"num", double{2}}}) << std::endl;
 
     // custom function example
-    ez::temp::renderer::add_function("say_my_name", [](const ez::temp::array & unsused){ return "My Name !"; });
+    ez::temp::renderer::add_function("say_my_name", [](const ez::temp::array & unsused){ return "Heisenberg !"; });
     std::cout <<
     ez::temp::renderer::render("{{ say_my_name() }}")
     << std::endl;
@@ -17,13 +17,13 @@ int main(int argc, char ** argv)
     // render context example
     std::cout <<
     ez::temp::renderer::render("Hello {{ you }} !!\n"
-                         "Today is {{ date() }}\n"
+                         "Today is {{ date() }}\n\n"
                          "{% for guy in guys %}"
-                         "\n{{ guy.name }} aged {{ guy.age }}."
+                         "{% if loop.first %}    - {% endif %}{{ toupper(guy.name) }} aged {{ guy.age }}{% if loop.last %}.\n{% else %}, {% endif %}"
                          "{% endfor %}"
                          "{% for name in names %}"
                          "{% for say in says %}"
-                         "\n- {{ toupper(name) }} says: {{ say }} !\n"
+                         "\n- {{ loop.parent.index }}, {{ loop.index }}: {{ toupper(name) }} says: {{ say }} !\n"
                          "{% endfor %}"
                          "{% endfor %}",
     ez::temp::dict{

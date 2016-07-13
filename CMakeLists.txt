@@ -17,6 +17,10 @@ add_definitions(-DBOOST_SYSTEM_NO_DEPRECATED)
 
 message(STATUS "Boost libraries: ${Boost_LIBRARIES}")
 
+if (${CMAKE_BUILD_TYPE} STREQUAL Debug)
+    add_definitions(-DEZ_DEBUG=1)
+endif()
+
 set(src_files src/eztemp.cpp)
 set(hdr_files_pub include/eztemp.h)
 set(hdr_files_priv include/ezexpr.h)
@@ -49,7 +53,7 @@ endif()
 
 add_subdirectory(progs)
 #add_subdirectory(bindings)
-#add_subdirectory(examples)
+add_subdirectory(examples)
 
 include(CTest)
 

@@ -17,11 +17,18 @@
 #include <string>
 #include <functional>
 #include <algorithm>
+#include <memory>
 #include <math.h>
 
 #include <eztemp.h>
 
 using namespace ez::temp;
+
+#ifdef EZ_DEBUG
+#define EZ_DPRINT(...)  fprintf(stderr, __VA_ARGS__)
+#else
+#define EZ_DPRINT(...)
+#endif
 
 std::map<std::string, renderer::render_function> renderer::m_functions;
 
@@ -217,14 +224,14 @@ inline void remove_whitespaces(std::string & str)
  * @return
  */
 inline static
-int get_next_section(const compiled_template & tokens, const std::string & name, std::shared_ptr<section_token> & section,int start_index = 0)
+int get_next_section(const compiled_template & tokens, section_token::section_type_t section_type, std::shared_ptr<section_token> & section,int start_index = 0)
 {
     for(int ii = start_index; ii < tokens.size(); ++ii)
     {
         if(tokens[ii]->token_type() == token::type::section)
         {
             section = std::dynamic_pointer_cast<section_token>(tokens[ii]);
-            if(section->params()[0] == name)
+            if(section->section_type() == section_type)
             {
                 return ii;
             }
@@ -245,7 +252,7 @@ int get_next_block(compiled_template & list, int start_index, std::string & bloc
 {
     std::shared_ptr<section_token> section;
     int index;
-    if((index = get_next_section(list, "block", section, start_index)) != -1)
+    if((index = get_next_section(list, section_token::block_open, section, start_index)) != -1)
     {
         block_name = section->params()[1];
         return index;
@@ -264,7 +271,7 @@ int get_next_endblock(compiled_template & list, int start_index)
 {
     std::shared_ptr<section_token> section;
     int index;
-    if((index = get_next_section(list, "endblock", section, start_index)) != -1)
+    if((index = get_next_section(list, section_token::block_close, section, start_index)) != -1)
     {
         return index;
     }
@@ -282,7 +289,7 @@ int get_named_block (compiled_template & list,std::string block_name)
 {
     std::shared_ptr<section_token> section;
     int index = 0;
-    while((index = get_next_section(list, "block", section, index)) != -1)
+    while((index = get_next_section(list, section_token::block_open, section, index)) != -1)
     {
         if(block_name == section->params()[1])
             return index;
@@ -341,9 +348,9 @@ dict dict::from_json(const std::string &json)
 // render_token stuff
 //
 
-render_token::render_token(const std::string & content):
+render_token::render_token(const std::string &content):
     token(token::type::render),
-    m_content(std::string(content.begin() + m_start_tag.size(), content.end() - m_end_tag.size()))
+    m_content(std::string(content.begin() + m_end_tag.size(), content.end() - m_end_tag.size()))
 {}
 
 std::string render_token::render(const dict & context){
@@ -362,8 +369,16 @@ std::string render_token::render(const dict & context){
        {
            if(!p.empty())
            {
-               const node & _n = context.at(p);
-               nl.push_back(_n);
+               std::vector<std::string> keys = split(p,'.');
+
+               node tmp_node = context.at(keys[0]);
+               for (int ii = 1; ii < keys.size(); ++ii)
+               {
+                   std::map<const std::string, node> d = boost::get<std::map<const std::string, node>>(tmp_node);
+                   tmp_node = d.at(keys[ii]);
+               }
+
+               nl.push_back(tmp_node);
            }
        }
        return renderer::call_function(function_name, nl);
@@ -371,11 +386,18 @@ std::string render_token::render(const dict & context){
    else
    {
        const std::vector<std::string> keys = split(full_key, '.');
-       return boost::apply_visitor(render_node_visitor(keys), context.at(keys.at(0)));
+       try {
+            return boost::apply_visitor(render_node_visitor(keys), context.at(keys.at(0)));
+       } catch(const std::out_of_range &e) {
+           std::stringstream ss;
+           ss << "ez::temp::render: no such key: ";
+           ss << full_key;
+           throw renderer::render_exception(ss.str().c_str());
+       }
    }
 }
 
-bool render_token::is_start(std::string::const_iterator start, const std::string::const_iterator & end)
+bool render_token::is_start(std::string::const_iterator start, const std::string::const_iterator &end)
 {
     for(std::string::const_iterator it = m_start_tag.begin(); it < m_start_tag.end(); ++it, ++start)
     {
@@ -384,7 +406,7 @@ bool render_token::is_start(std::string::const_iterator start, const std::string
     }
     return true;
 }
-bool render_token::is_end(std::string::const_iterator start, const std::string::const_iterator & end)
+bool render_token::is_end(std::string::const_iterator start, const std::string::const_iterator &end)
 {
     for(std::string::const_iterator it = m_end_tag.begin(); it < m_end_tag.end(); ++it, ++start)
     {
@@ -400,7 +422,8 @@ bool render_token::is_end(std::string::const_iterator start, const std::string::
 
 section_token::section_token(const std::string & content):
     token(token::type::section),
-    m_content(std::string(content.begin() + m_start_tag.size(), content.end() - m_end_tag.size()))
+    m_content(std::string(content.begin() + m_start_tag.size(), content.end() - m_end_tag.size())),
+    m_section_type(unknown)
 {
     m_params = split(m_content, ' ');
 
@@ -411,9 +434,57 @@ section_token::section_token(const std::string & content):
 
     // remove all blank params
     m_params.erase(std::remove(m_params.begin(), m_params.end(), ""), m_params.end());
+
+    if (m_params[0] == "if")
+    {
+        m_section_type = if_open;
+    }
+    else if (m_params[0] == "elif")
+    {
+        m_section_type = if_else_if;
+    }
+    else if (m_params[0] == "else")
+    {
+        m_section_type = if_else;
+    }
+    else if (m_params[0] == "endif")
+    {
+        m_section_type = if_close;
+    }
+    else if (m_params[0] == "for")
+    {
+        m_section_type = for_open;
+    }
+    else if (m_params[0] == "elsefor")
+    {
+        m_section_type = for_else;
+    }
+    else if (m_params[0] == "endfor")
+    {
+        m_section_type = for_close;
+    }
+    else if (m_params[0] == "block")
+    {
+        m_section_type = block_open;
+    }
+    else if (m_params[0] == "blockend")
+    {
+        m_section_type = block_close;
+    }
+    else if (m_params[0] == "extends")
+    {
+        m_section_type = extends;
+    }
+    else
+    {
+        std::stringstream ss;
+        ss << "Unknown section tag: ";
+        ss << m_params[0];
+        throw renderer::render_exception(ss.str().c_str());
+    }
 }
 
-bool section_token::is_start(std::string::const_iterator start, const std::string::const_iterator & end)
+bool section_token::is_start(std::string::const_iterator start, const std::string::const_iterator &end)
 {
     for(std::string::const_iterator it = m_start_tag.begin(); it < m_start_tag.end(); ++it, ++start)
     {
@@ -423,7 +494,7 @@ bool section_token::is_start(std::string::const_iterator start, const std::strin
     return true;
 }
 
-bool section_token::is_end(std::string::const_iterator start, const std::string::const_iterator & end)
+bool section_token::is_end(std::string::const_iterator start, const std::string::const_iterator &end)
 {
     for(std::string::const_iterator it = m_end_tag.begin(); it < m_end_tag.end(); ++it, ++start)
     {
@@ -437,7 +508,7 @@ bool section_token::is_end(std::string::const_iterator start, const std::string:
 // renderer stuff
 //
 
-compiled_template renderer::compile_file(const std::string &file_path)
+token::ptr renderer::compile_file(const std::string &file_path)
 {
     std::ifstream fs(file_path);
     std::string path = boost::filesystem::path(file_path).remove_filename().string();
@@ -446,47 +517,52 @@ compiled_template renderer::compile_file(const std::string &file_path)
     return compile(std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>()), path);
 }
 
-compiled_template renderer::compile(const std::string &input, const std::string & path)
+inline void push_text_if_required(std::string::const_iterator begin, std::string::const_iterator end, token::ptr parent)
 {
-    compiled_template tokens;
-
-    auto push_text_if_required = [&input](compiled_template & list, std::string::const_iterator begin, std::string::const_iterator end){
-        if(begin != end)
-        {
-            list.push_back(std::shared_ptr<token>(new text_token(std::string(begin, end))));
-        }
-    };
-
-    std::string::const_iterator last_it = input.begin();
-    std::string::const_iterator it = input.begin();
-    for(; it < input.end(); ++it)
+    if(begin < end)
     {
-        if(render_token::is_start(it, input.end()))
+        token::ptr t(new text_token(std::string(begin, end)));
+        parent->add_child(t);
+    }
+}
+
+
+void _compile(std::string::const_iterator & it,
+             const std::string::const_iterator & end,
+             std::string::const_iterator text_tok_start,
+             token::ptr parent)
+{
+    for (; it < end; ++it)
+    {
+        if(render_token::is_start(it, end))
         {
             std::string::const_iterator it_start = it;
-            for(; it < input.end(); ++it)
+            for(; it < end; ++it)
             {
-                if(render_token::is_end(it, input.end()))
+                if(render_token::is_end(it, end))
                 {
-                    push_text_if_required(tokens, last_it, it_start);
+                    push_text_if_required(text_tok_start, it_start, parent);
                     it += render_token::end_tag().size();
-                    tokens.push_back(std::shared_ptr<token>(new render_token(std::string(it_start, it))));
-                    last_it = it;
+                    token::ptr t(new render_token(std::string(it_start, it)));
+                    parent->add_child(t);
+                    text_tok_start = it;
                     --it;
                     break;
                 }
             }
         }
-        else if(section_token::is_start(it, input.end()))
+        else if(section_token::is_start(it, end))
         {
             std::string::const_iterator it_start = it;
-            for(; it < input.end(); ++it)
+            for(; it < end; ++it)
             {
-                if(section_token::is_end(it, input.end()))
+                if(section_token::is_end(it, end))
                 {
                     // clean pre-section (remove spaces)
-                    int pos = std::distance(input.begin(), it_start);
-                    int prev_nl = input.rfind('\n', pos);
+
+                    std::string str(text_tok_start, it_start);
+                    int pos = std::distance(text_tok_start, it_start);
+                    int prev_nl = str.rfind('\n', pos);
                     bool remove = false;
                     if(prev_nl != std::string::npos)
                     {
@@ -506,69 +582,152 @@ compiled_template renderer::compile(const std::string &input, const std::string 
                         else remove = false;
                         if(remove)
                         {
-                            push_text_if_required(tokens, last_it, it_start - dist);
+                            push_text_if_required(text_tok_start, it_start - dist, parent);
                         }
                         else
                         {
-                            push_text_if_required(tokens, last_it, it_start);
+                            push_text_if_required(text_tok_start, it_start, parent);
                         }
                     }
                     else
                     {
-                        push_text_if_required(tokens, last_it, it_start);
+                        push_text_if_required(text_tok_start, it_start, parent);
                     }
 
-                    it += section_token::end_tag().size();
-                    tokens.push_back(std::shared_ptr<token>(new section_token(std::string(it_start, it))));
-                    last_it = it;
 
+                    it += section_token::end_tag().size();
+                    section_token * sec = new section_token(std::string(it_start, it));
+                    token::ptr t(sec);
+
+                    switch (sec->section_type())
+                    {
+                        case section_token::for_open:
+                        case section_token::if_open:
+                            parent->add_child(t);
+                            text_tok_start = it;
+                            _compile(it, end, text_tok_start, t);
+                        break;
+                        case section_token::for_else:
+                        {
+                            section_token * parent_sec = std::dynamic_pointer_cast<section_token>(parent).get();
+                            if (!parent_sec || parent_sec->section_type() != section_token::for_open)
+                            {
+                                throw renderer::render_exception("ez::temp::compile: \"elsefor\" found without \"for\"");
+                            }
+                            else
+                            {
+                                parent_sec->parent()->add_child(t);
+                                text_tok_start = it;
+                                _compile(it, end, text_tok_start, t);
+                                return;
+                            }
+                        }
+                        case section_token::if_else:
+                        {
+                            section_token * parent_sec = std::dynamic_pointer_cast<section_token>(parent).get();
+                            if (!parent_sec || parent_sec->section_type() != section_token::if_open)
+                            {
+                                throw renderer::render_exception("ez::temp::compile: \"else\" found without \"if\"");
+                            }
+                            else
+                            {
+                                parent_sec->parent()->add_child(t);
+                                text_tok_start = it;
+                                _compile(it, end, text_tok_start, t);
+                                return;
+                            }
+                        }
+                        break;
+                        case section_token::for_close:
+                        {
+                            section_token * parent_sec = std::dynamic_pointer_cast<section_token>(parent).get();
+                            if (!parent_sec || (
+                                    parent_sec->section_type() != section_token::for_open &&
+                                    parent_sec->section_type() != section_token::for_else))
+                            {
+                                throw renderer::render_exception("ez::temp::compile: \"endfor\" found without \"for\"");
+                            }
+                            else
+                            {
+                                parent_sec->parent()->add_child(t);
+                                return;
+                            }
+                        }
+                        break;
+                        case section_token::if_close:
+                        {
+                            section_token * parent_sec = std::dynamic_pointer_cast<section_token>(parent).get();
+                            if (!parent_sec || (
+                                    parent_sec->section_type() != section_token::if_open &&
+                                    parent_sec->section_type() != section_token::if_else_if &&
+                                    parent_sec->section_type() != section_token::if_else))
+                            {
+                                throw renderer::render_exception("ez::temp::compile: \"endif\" found without \"if\"");
+                            }
+                            else
+                            {
+                                parent_sec->parent()->add_child(t);
+                                return;
+                            }
+                        }
+                        break;
+                        default:
+                            {
+                                std::stringstream ss;
+                                ss << "ez::temp::compile: unhandled tag: ";
+                                ss << sec->section_type();
+                                throw renderer::render_exception(ss.str().c_str());
+                            }
+                        break;
+                    }
+
+                    text_tok_start = it;
                     --it;
                     break;
                 }
             }
         }
     }
-    push_text_if_required(tokens, last_it, it);
+    push_text_if_required(text_tok_start, end, parent);
+}
 
-    // check for extends
-    std::string extending_base;
-
-    std::shared_ptr<section_token> section;
-    int index;
-    if((index = get_next_section(tokens, "extends", section, 0)) >= 0)
+void _print_tokens(const token::ptr &root, int level = 0)
+{
+    if (level)
     {
-        // extending ...
-
-        extending_base = section->params()[1];
-        compiled_template base_tokens = compile_file(path + "/" + extending_base + ".ez" );
-
-        std::string block_name;
-
-        int index_base = 0;
-        int index = 0;
-        while((index_base = get_next_block(base_tokens, index_base, block_name)) != -1)
-        {
-            int index_endblock_base = get_next_endblock(base_tokens, index_base);
-
-            if((index = get_named_block(tokens, block_name)) != -1)
-            {
-                // erase base content
-                base_tokens.erase(base_tokens.begin() + index_base, base_tokens.begin() + index_endblock_base);
-
-                int index_endblock = get_next_endblock(tokens, index);
-                base_tokens.insert(base_tokens.begin() + index_base, tokens.begin() + index + 1, tokens.begin() + index_endblock);
-                index = 0;
-            }
-            else
-            {
-                base_tokens.erase(base_tokens.begin() + index_endblock_base);   // remove the endblock section
-                base_tokens.erase(base_tokens.begin() + index_base);            // remove the block section
-            }
-        }
-        tokens = base_tokens;
+        for (int ii = 0; ii < level; ++ii)
+            std::cout << "  ";
+        std::cout << "|--> ";
     }
+    switch (root->token_type())
+    {
+    case token::type::text:
+        std::cout << "text token: " << std::dynamic_pointer_cast<text_token>(root)->content() << std::endl;
+    break;
+    case token::type::render:
+        std::cout << "render token: " << std::dynamic_pointer_cast<render_token>(root)->content() << std::endl;
+    break;
+    case token::type::section:
+        std::cout << "section token: " << std::dynamic_pointer_cast<section_token>(root)->content() << std::endl;
+    break;
+    case token::type::root:
+        std::cout << "root token"  << std::endl;
+    break;
+    }
+    for (const token::ptr & t: root->children())
+    {
+        _print_tokens(t, level + 1);
+    }
+}
 
-    return tokens;
+token::ptr renderer::compile(const std::string &input, const std::string & path)
+{
+    compiled_template tokens;
+    token::ptr root(new root_token);
+    std::string::const_iterator start = input.begin();
+    _compile(start, input.end(), start, root);
+    _print_tokens(root);
+    return root;
 }
 
 std::string renderer::render(const std::string & input, const std::string & context)
@@ -587,21 +746,23 @@ std::string renderer::render_file(const std::string & input, const std::string &
     return render(compile_file(input), dict::from_json(context));
 }
 
-int process_tokens(const compiled_template & toks, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx)
+int process_tokens(const token::ptr & root, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx)
 {
-    bool loop_done = false;
-    int ii;
-    int ii_last = ii_start;
+    bool process_elsefor = false;
 
-    for(ii = ii_start; ii < toks.size(); ++ii)
+    const std::vector<token::ptr> & toks = root->children();
+
+    for(int ii = 0; ii < toks.size(); ++ii)
     {
         switch(toks[ii]->token_type())
         {
         case token::type::section:
             {
                 std::shared_ptr<section_token> open_sec = std::dynamic_pointer_cast<section_token>(toks[ii]);
-                if(open_sec->params()[0] == "for")
+                if(open_sec->section_type() == section_token::for_open)
                 {
+                    EZ_DPRINT("ez::temp::render: opening section: \"%s\"\n", open_sec->content().c_str());
+
                     // process the for loop
                     dict for_context = context;
                     std::vector<std::string> container_id = split(open_sec->params()[3], '.');
@@ -621,21 +782,40 @@ int process_tokens(const compiled_template & toks, std::string & output, const d
                         dict loop_context = dict();
                         loop_context["length"] = size;
                         loop_context["parent"] = parent_loop_ctx;
-                        for(const node & _node: array)
-                        {
-                            loop_context["index"] = index + 1;
-                            loop_context["index0"] = index;
-                            loop_context["first"] = index == 0;
-                            loop_context["last"] = index == size - 1;
-                            loop_context["revindex"] = size - index;
-                            loop_context["revindex0"] = size - index - 1;
-                            for_context["loop"] = loop_context;
-                            for_context[open_sec->params()[1]] = _node;
 
-                            ++index;
-                            ii_last = process_tokens(toks, output, for_context, ii + 1, true, loop_context);
+                        if (array.size())
+                        {
+                            for(const node & _node: array)
+                            {
+                                loop_context["index"] = index + 1;
+                                loop_context["index0"] = index;
+                                loop_context["first"] = index == 0;
+                                loop_context["last"] = index == size - 1;
+                                loop_context["revindex"] = size - index;
+                                loop_context["revindex0"] = size - index - 1;
+                                for_context["loop"] = loop_context;
+                                for_context[open_sec->params()[1]] = _node;
+
+                                ++index;
+                                //ii_last = process_tokens(toks[ii], output, for_context, ii + 1, true, loop_context);
+                                process_tokens(toks[ii], output, for_context, ii + 1, true, loop_context);
+                            }
                         }
-                        ii = ii_last;
+                        else
+                        {
+                            EZ_DPRINT("ez::temp::render: section end: \"%s\" (empty), ", open_sec->content().c_str());
+                            // jump to elsefor/endfor section
+                            std::shared_ptr<section_token> tmp_sec;
+                            int else_index = get_next_section(toks, section_token::for_else, tmp_sec, ii + 1);
+                            int for_close_index = get_next_section(toks, section_token::for_close, tmp_sec, ii + 1);
+                            if(else_index != -1 && else_index < for_close_index)
+                            {
+                                EZ_DPRINT("jumping to elsefor\n");
+                                ii = else_index;
+                                process_tokens(toks[ii], output, for_context, ii + 1, true, loop_context);
+                                ii = for_close_index;
+                            }
+                        }
                     } catch(const std::out_of_range& e) {
                         std::stringstream ss;
                         ss << "ez::temp::render: array not found:\"" << open_sec->params()[3] << "\"" << std::endl;
@@ -647,14 +827,17 @@ int process_tokens(const compiled_template & toks, std::string & output, const d
                     }
 
                 }
-                else if(open_sec->params()[0] == "endfor")
+                else if (open_sec->section_type() == section_token::for_else)
                 {
-                    ii_last = ii;
-                    loop_done = true;
-                    return ii_last;
+                    EZ_DPRINT("ez::temp::render: section elsefor\n");
                 }
-                else if(open_sec->params()[0] == "if")
+                else if (open_sec->section_type() == section_token::for_close)
                 {
+                    EZ_DPRINT("ez::temp::render: section endfor\n");
+                }
+                else if(open_sec->section_type() == section_token::if_open)
+                {
+                    EZ_DPRINT("ez::temp::render: section if: \"%s\"\n", open_sec->content().c_str());
                     int ii_param = 1;
                     bool check_request = true;
                     if(open_sec->params()[1] == "not")
@@ -670,34 +853,51 @@ int process_tokens(const compiled_template & toks, std::string & output, const d
                     {
                         // jump to else section
                         std::shared_ptr<section_token> tmp_sec;
-                        int endif_index = get_next_section(toks, "endif", tmp_sec, ii);
-                        int else_index = get_next_section(toks, "else", tmp_sec, ii);
-                        if(else_index != -1 && else_index < endif_index)
-                            ii = else_index;
-                        else ii = endif_index;
+
+                        int else_index = get_next_section(toks, section_token::if_else, tmp_sec, ii + 1);
+                        int if_close_index = get_next_section(toks, section_token::if_close, tmp_sec, ii + 1);
+                        if (else_index != -1 && else_index < if_close_index)
+                        {
+                            process_tokens(toks[else_index], output, context, ii, false, parent_loop_ctx);
+                            ii = if_close_index;
+                        }
+                    }
+                    else
+                    {
+                        process_tokens(toks[ii], output, context, ii, false, parent_loop_ctx);
                     }
                 }
-                else if(open_sec->params()[0] == "else")
+                else if (open_sec->section_type() == section_token::if_else)
                 {
-                    // jump to endif section
-                    std::shared_ptr<section_token> endif_sec;
-                    ii = get_next_section(toks, "endif", endif_sec, ii);
+                    EZ_DPRINT("ez::temp::render: section else\n");
+                }
+                else if (open_sec->section_type() == section_token::if_close)
+                {
+                    EZ_DPRINT("ez::temp::render: section endif\n");
+                }
+                else
+                {
+                    std::stringstream ss;
+                    ss << "Unknown tag: ";
+                    ss << open_sec->params()[0];
+                    throw renderer::render_exception(ss.str().c_str());
                 }
             }
             break;
         default:
             {
+                EZ_DPRINT("ez::temp::render: rendering: \"%s\"\n", toks[ii]->render(context).c_str());
                 output += toks[ii]->render(context);
             }
         }
     }
-    return ii_last;
+    return 0;
 }
 
-std::string renderer::render(const compiled_template & toks, const dict & context)
+std::string renderer::render(const token::ptr & root, const dict & context)
 {
     std::string output;
-    process_tokens(toks, output, context, 0, false, dict());
+    process_tokens(root, output, context, 0, false, dict());
     return output;
 }
 

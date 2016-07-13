@@ -14,6 +14,7 @@
 #include <cctype>
 #include <functional>
 #include <fstream>
+#include <iostream>
 
 #include <eztemp_export.h>
 
@@ -60,13 +61,32 @@ class token
 {
 public:
     enum class type {
-        text, render, section,
+        root, text, render, section,
     };
-    token(token::type _type): m_type(_type) {}
+    typedef std::shared_ptr<token> ptr;
+    token(token::type _type): m_type(_type)
+    {
+    }
+    inline void add_child(const ptr &child) { m_children.push_back(child); child->set_parent(this); }
     inline const token::type token_type() { return m_type; }
     virtual std::string render(const dict & context) = 0;
+    inline const std::vector<ptr>& children() const { return m_children; }
+    inline token * parent() const { return m_parent; }
+
 private:
+    inline void set_parent(token * parent) { m_parent = parent; }
+
     type m_type;
+    //ptr m_parent;
+    token * m_parent;
+    std::vector<ptr> m_children;
+};
+
+class root_token : public token
+{
+public:
+    root_token(): token(token::type::root){}
+    std::string render(const dict & context) override { throw std::runtime_error("Root token cannot be rendered"); }
 };
 
 inline std::vector<std::string> split(const std::string &text, char sep) {
@@ -86,10 +106,11 @@ inline std::vector<std::string> split(const std::string &text, char sep) {
 class text_token : public token
 {
 public:
-    text_token(const std::string & text): token(token::type::text), m_text(text) {}
-    std::string render(const dict & context) override { return m_text; }
+    text_token(const std::string & text): token(token::type::text), m_content(text) {}
+    std::string render(const dict & context) override { return m_content; }
+    inline const std::string & content() { return m_content; }
 private:
-    std::string m_text;
+    std::string m_content;
 };
 
 /**
@@ -100,10 +121,11 @@ class render_token : public token
 public:
     render_token(const std::string & content);
     std::string render(const dict& context) override;
-    static bool is_start(std::string::const_iterator start, const std::string::const_iterator & end);
-    static bool is_end(std::string::const_iterator start, const std::string::const_iterator & end);
+    static bool is_start(std::string::const_iterator start, const std::string::const_iterator &end);
+    static bool is_end(std::string::const_iterator start, const std::string::const_iterator &end);
     static inline const std::string & start_tag() { return m_start_tag; }
     static inline const std::string & end_tag() { return m_end_tag; }
+    inline const std::string & content() { return m_content; }
 private:
     std::string m_content;
     static std::string m_start_tag;
@@ -116,24 +138,60 @@ private:
 class section_token : public token
 {
 public:
+
+    typedef enum {
+        unknown,
+
+        if_open,
+        if_else_if,
+        if_else,
+        if_close,
+
+        for_open,
+        for_else,
+        for_close,
+
+        block_open,
+        block_close,
+
+        extends
+    } section_type_t;
+
     section_token(const std::string & content);
+
     std::string render(const dict& context) override { return ""; }
     inline const std::vector<std::string> & params() const { return m_params; }
-    static bool is_start(std::string::const_iterator start, const std::string::const_iterator & end);
-    static bool is_end(std::string::const_iterator start, const std::string::const_iterator & end);
+    static bool is_start(std::string::const_iterator start, const std::string::const_iterator &end);
+    static bool is_end(std::string::const_iterator start, const std::string::const_iterator &end);
     static inline const std::string & start_tag() { return m_start_tag; }
     static inline const std::string & end_tag() { return m_end_tag; }
+    inline const std::string & content() { return m_content; }
+    inline section_type_t section_type() { return m_section_type; }
+
+    inline bool is_open_section() const
+    {
+        return m_section_type == if_open || m_section_type == for_open;
+    }
+
+    inline bool is_close_section() const
+    {
+        return m_section_type == if_close || m_section_type == for_close;
+    }
+
 private:
     std::string m_content;
     std::vector <std::string> m_params;
     static std::string m_start_tag;
     static std::string m_end_tag;
+    section_type_t m_section_type;
 };
+
+
 
 /**
  * @brief List of rendering tokens.
  **/
-using compiled_template = std::vector<std::shared_ptr<token>>;
+using compiled_template = std::vector<token::ptr>;
 
 /**
  * @brief The renderer class.
@@ -157,14 +215,14 @@ public:
      * @param path  The path to find extends templates.
      * @return The compiled template.
      **/
-    static compiled_template compile(const std::string & input, const std::string & path = "");
+    static token::ptr compile(const std::string & input, const std::string & path = "");
 
     /**
      * @brief Compile a template file.
      * @param filepath  The path of the template file.
      * @return The compiled template.
      **/
-    static compiled_template compile_file(const std::string & filepath);
+    static token::ptr compile_file(const std::string & filepath);
 
     /**
      * @brief Render a template file.
@@ -196,7 +254,7 @@ public:
      * @param context   The context dictionnary.
      * @return The rendered template.
      */
-    static std::string render(const ez::temp::compiled_template & input, const dict & context);
+    static std::string render(const token::ptr & root, const dict & context);
 
     /**
      * @brief Template rendering function definition.
