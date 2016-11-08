@@ -21,6 +21,7 @@
 #include <math.h>
 
 #include <eztemp.h>
+#include <ezexpr.h>
 
 using namespace ez::temp;
 
@@ -66,7 +67,26 @@ public:
     }
     std::string operator ()(const std::map<const std::string, node> & map) const
     {
-        return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
+        try {
+            return boost::apply_visitor(render_node_visitor(m_keys, m_level + 1), map.at(m_keys.at(m_level)));
+        } catch (const std::out_of_range & e) {
+            boost::cmatch what;
+            if (boost::regex_match(m_keys.at(m_level).c_str(),
+                                  what,
+                                  boost::regex("(?<array>\\w{1,})\\[(?<num>\\d+)\\]")))
+            {
+                const std::string aname = what["array"].str();
+                const ez::temp::array & a = boost::get<ez::temp::array>(map.at(aname));
+                if (a.empty())
+                {
+                    throw renderer::render_exception(("Array: " + aname + " is empty.").c_str());
+                }
+                const node & n = a[atoi(what["num"].str().c_str())];
+                return boost::apply_visitor(render_node_visitor({what["array"]}), n);
+            }
+            std::cerr << "key \"" << m_keys.at(m_level) << "\" not found" << std::endl;
+            throw e;
+        }
     }
     std::string operator ()(const array & var) const
     {
@@ -299,52 +319,6 @@ int get_named_block (compiled_template & list,std::string block_name)
 }
 
 // --------------------------------------------
-// dict stuff
-//
-
-dict dict::from_json(const std::string &json)
-{
-    dict context;
-
-    std::stringstream ss;
-    ss << json;
-    boost::property_tree::ptree pt;
-    boost::property_tree::read_json(ss, pt);
-    using boost::property_tree::ptree;
-    std::function<void(const std::string&, ptree&, dict &, const std::string&)> parse_node;
-    parse_node = [&parse_node](const std::string& key, ptree & pt, dict & context, const std::string& parent_key){
-        if(pt.empty())
-        {
-            if(key.empty())
-            {
-                if(context.find(parent_key) != context.end())
-                {
-                    boost::get<std::vector<node>>(context[parent_key]).push_back(pt.data());
-                }
-                else
-                {
-                    context[parent_key] = std::vector<node>{pt.data()};
-                }
-            }
-            else
-            {
-                context[key] = pt.data();
-            }
-        }
-        else
-        {
-            for (ptree::iterator node = pt.begin(); node != pt.end(); ++node)
-            {
-                parse_node(node->first, node->second, context, key);
-            }
-        }
-    };
-
-    parse_node("", pt, context, "");
-    return context;
-}
-
-// --------------------------------------------
 // render_token stuff
 //
 
@@ -364,7 +338,7 @@ std::string render_token::render(const dict & context){
        std::string function_name = what[1];
        std::string params_raw = what[2];
        remove_whitespaces(params_raw);
-       std::vector<std::string> params = split(params_raw,',');
+       std::vector<std::string> params = ez::split(params_raw,',');
        for(const std::string & p: params)
        {
            if(!p.empty())
@@ -389,6 +363,12 @@ std::string render_token::render(const dict & context){
        try {
             return boost::apply_visitor(render_node_visitor(keys), context.at(keys.at(0)));
        } catch(const std::out_of_range &e) {
+           /*if (boost::regex_match(keys,
+                                  what,
+                                  boost::regex("\\w{1,}\\[(?<num>\\d+)\\]")))
+           {
+               const ez::temp::array & a = boost::get<>
+           }*/
            std::stringstream ss;
            ss << "ez::temp::render: no such key: ";
            ss << full_key;
@@ -507,6 +487,48 @@ bool section_token::is_end(std::string::const_iterator start, const std::string:
 // --------------------------------------------
 // renderer stuff
 //
+
+dict renderer::make_dict(const std::string &json)
+{
+    dict context;
+
+    std::stringstream ss;
+    ss << json;
+    boost::property_tree::ptree pt;
+    boost::property_tree::read_json(ss, pt);
+    using boost::property_tree::ptree;
+    std::function<void(const std::string&, ptree&, dict &, const std::string&)> parse_node;
+    parse_node = [&parse_node](const std::string& key, ptree & pt, dict & context, const std::string& parent_key){
+        if(pt.empty())
+        {
+            if(key.empty())
+            {
+                if(context.find(parent_key) != context.end())
+                {
+                    boost::get<std::vector<node>>(context[parent_key]).push_back(pt.data());
+                }
+                else
+                {
+                    context[parent_key] = std::vector<node>{pt.data()};
+                }
+            }
+            else
+            {
+                context[key] = pt.data();
+            }
+        }
+        else
+        {
+            for (ptree::iterator node = pt.begin(); node != pt.end(); ++node)
+            {
+                parse_node(node->first, node->second, context, key);
+            }
+        }
+    };
+
+    parse_node("", pt, context, "");
+    return context;
+}
 
 token::ptr renderer::compile_file(const std::string &file_path)
 {
@@ -732,7 +754,7 @@ token::ptr renderer::compile(const std::string &input, const std::string & path)
 
 std::string renderer::render(const std::string & input, const std::string & context)
 {
-    return render(input, dict::from_json(context));
+    return render(input, make_dict(context));
 }
 
 std::string renderer::render(const std::string & input, const dict & context)
@@ -743,7 +765,7 @@ std::string renderer::render(const std::string & input, const dict & context)
 
 std::string renderer::render_file(const std::string & input, const std::string & context)
 {
-    return render(compile_file(input), dict::from_json(context));
+    return render(compile_file(input), make_dict(context));
 }
 
 int process_tokens(const token::ptr & root, std::string & output, const dict & context, int ii_start, bool break_on_endfor, const dict & parent_loop_ctx)
@@ -765,7 +787,7 @@ int process_tokens(const token::ptr & root, std::string & output, const dict & c
 
                     // process the for loop
                     dict for_context = context;
-                    std::vector<std::string> container_id = split(open_sec->params()[3], '.');
+                    std::vector<std::string> container_id = ez::split(open_sec->params()[3], '.');
 
                     try
                     {
@@ -846,9 +868,16 @@ int process_tokens(const token::ptr & root, std::string & output, const dict & c
                         ii_param++;
                     }
 
-                    std::vector<std::string> keys = split(open_sec->params()[ii_param], '.');
+                    if (open_sec->params()[ii_param] == "class.flags")
+                        std::cout << std::endl;
 
-                    bool result = boost::apply_visitor(bool_check_node_visitor(keys), context.at(keys.at(0)));
+                    std::vector<std::string> keys = ez::split(open_sec->params()[ii_param], '.');
+
+                    bool result = false;
+                    std::vector<std::string> eval_elems(open_sec->params().begin() + ii_param, open_sec->params().end());
+                    std::string eval_str = boost::join(eval_elems, " ");
+                    result = ez::expr::eval<bool>(eval_str, context);
+                    //result = boost::apply_visitor(bool_check_node_visitor(keys), context.at(keys.at(0)));
                     if(result != check_request)
                     {
                         // jump to else section

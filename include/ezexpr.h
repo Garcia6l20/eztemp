@@ -151,9 +151,9 @@ struct grammar
 
     boost::spirit::qi::rule<
             Iterator, FPT(), boost::spirit::ascii::space_type
-        > expression, term, factor, primary;
+        > equation, expression, term, factor, primary;
 
-    grammar() : grammar::base_type(expression)
+    grammar() : grammar::base_type(equation)
     {
         using boost::spirit::qi::real_parser;
         using boost::spirit::qi::real_policies;
@@ -168,6 +168,12 @@ struct grammar
         boost::phoenix::function<lazy_pow_>   lazy_pow;
         boost::phoenix::function<lazy_ufunc_> lazy_ufunc;
         boost::phoenix::function<lazy_bfunc_> lazy_bfunc;
+
+        equation = (
+                        ( (expression >> "==" >> expression) [ _val = _1 == _2 ] )
+                      | ( (expression >> "!=" >> expression) [ _val = _1 != _2 ] )
+                      | ( (expression) [ _val = _1 ] )
+                    );
 
         expression =
             term                   [_val =  _1]
@@ -216,25 +222,98 @@ bool parse(Iterator &iter,
                 iter, end, g, boost::spirit::ascii::space, result);
 }
 
-template <typename T>
-T eval(const std::string & input, const ez::temp::dict & context)
+class _eval_key_value_visitor: public boost::static_visitor<std::map<std::string, double>>
 {
-    T result;
-    grammar<T,std::string::const_iterator> eg;
+public:
+    _eval_key_value_visitor(const std::string & key):
+        m_key(key)
+    {
+    }
+
+    std::map<std::string, double> operator()(nullptr_t value) const
+    {
+        throw std::runtime_error("ez::eval: nullptr detected");
+    }
+    std::map<std::string, double> operator()(const std::string &value) const
+    {
+        double v = -DBL_MAX;
+        try
+        {
+            v = std::stod(value);
+        }
+        catch(const std::exception & e){}
+        return {{m_key, v}};
+    }
+    std::map<std::string, double> operator()(const double &value) const
+    {
+        return {{m_key, value}};
+    }
+    std::map<std::string, double> operator()(const int &value) const
+    {
+        return {{m_key, (double)value}};
+    }
+    std::map<std::string, double> operator()(const bool &value) const
+    {
+        return {{m_key, value == true ? 1.0 : 0.0}};
+    }
+    std::map<std::string, double> operator ()(const std::map<const std::string, ez::temp::node> & dict) const
+    {
+        std::map<std::string, double> list;
+        for (const std::pair<std::string, ez::temp::node> & ii: dict)
+        {
+            std::map<std::string, double> child_list = boost::apply_visitor(_eval_key_value_visitor(m_key + "." + ii.first), ii.second);
+            list.insert(child_list.begin(), child_list.end());
+        }
+        return list;
+    }
+    std::map<std::string, double> operator ()(const ez::temp::array & array) const
+    {
+        std::map<std::string, double> list;
+        int ii = 0;
+        for (const ez::temp::node & n: array)
+        {
+            std::map<std::string, double> child_list = boost::apply_visitor(_eval_key_value_visitor(m_key + "[" + std::to_string(ii++) + "]"), n);
+            list.insert(child_list.begin(), child_list.end());
+        }
+        return list;
+    }
+private:
+    std::string m_key;
+    std::map<std::string, double> m_list;
+};
+
+static double _eval(const std::string & input, const ez::temp::dict & context)
+{
+    double result = 0.0;
+    grammar<double, std::string::const_iterator> eg;
     std::for_each(context.begin(), context.end(), [&eg](const std::pair<std::string, ez::temp::node> & item){
         try
         {
-            eg.locals.add(item.first, boost::get<T>(item.second));
+            std::map<std::string, double> kv = boost::apply_visitor(_eval_key_value_visitor(item.first), item.second);
+            for (const std::pair<std::string, double> & ii: kv)
+                eg.locals.add(ii.first, ii.second);
         }
         catch(std::exception & e)
         {
-            std::cerr << "ez::expr::eval: warning: unhandled data type (" << item.second.type().name() << ")" << std::endl;
+            std::cerr << "ez::expr::eval: warning: unhandled data type (" << item.second.type().name() << "): " << e.what() << std::endl;
         }
     });
     std::string::const_iterator ii = input.begin();
     std::string::const_iterator end = input.end();
     parse(ii, end, eg, result);
     return result;
+}
+
+template <typename T = double>
+static T eval(const std::string & input, const ez::temp::dict & context)
+{
+    return (T) _eval(input, context);
+}
+
+template <>
+bool eval<bool>(const std::string & input, const ez::temp::dict & context)
+{
+    return _eval(input, context) != 0.0;
 }
 
 } // namespace expr

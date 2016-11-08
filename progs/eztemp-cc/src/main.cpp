@@ -33,6 +33,23 @@ std::string unescape(const std::string& s)
   return res;
 }
 
+static void help(int argc, char ** argv)
+{
+    std::cout << "Usage:" << std::endl;
+    std::cout << "  " << argv[0] << " [options] INPUT_FILENAME_OR_STRING" << std::endl;
+    std::cout << "Option:" << std::endl;
+    std::cout << "  --help/-h                           Show this message and exit." << std::endl;
+    std::cout << "  --verbose/-v                        Let me talk about me." << std::endl;
+    std::cout << "  --params/-p  [FILENAME OR STRING]   Json parameters." << std::endl;
+}
+
+using _arg = std::pair<std::string, std::string>;
+
+inline bool operator ==(const std::string &str, const _arg & values)
+{
+    return str == "--" + values.first || str == "-" + values.second;
+}
+
 int main(int argc, char ** argv)
 {
     try
@@ -40,56 +57,41 @@ int main(int argc, char ** argv)
         std::string input;
         std::string params = "{}";
         std::ostream * out = &std::cout;
-        std::ofstream fout;
         bool verbose = false;
 
-        po::options_description desc("Options");
-
-        po::positional_options_description p;
-        p.add("input", 1);
-        p.add("output", 1);
-
-
-        desc.add_options()
-            ("help", "produce help message")
-            ("verbose,v", "Let me talk !")
-            ("input", po::value(&input), "Input (filename or string)")
-            ("output", po::value<std::string>(), "Output <filename>")
-            ("params,p", po::value(&params), "Json parameters (filename or string)")
-        ;
-
-        po::variables_map vm;
-        po::store(po::command_line_parser(argc, argv).
-                  options(desc).positional(p).run(), vm);
-        po::notify(vm);
-
-        if (vm.count("help") || !vm.count("input")) {
-            std::cout << desc << std::endl;
-            return 0;
-        }
-
-        if(vm.count("verbose"))
+        for (int ii = 1; ii < argc; ++ii)
         {
-            verbose = true;
-        }
-
-        if(vm.count("output"))
-        {
-            fout.open(vm["output"].as<std::string>());
-            out = &fout;
-        }
-
-        input = unescape(vm["input"].as<std::string>());
-
-        if(vm.count("params"))
-        {
-            params = unescape(vm["params"].as<std::string>());
-            if(boost::ends_with(params, ".json"))
+            std::string arg = argv[ii];
+            if (arg == _arg{"help", "h"})
             {
-                // load it
-                std::ifstream fs(params);
-                params = std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>());
+                help(argc, argv);
+                exit(0);
             }
+            else if (arg == _arg{"verbose", "v"})
+            {
+                verbose = true;
+            }
+            else if (arg == _arg{"params", "p"})
+            {
+                params = unescape(argv[++ii]);
+            }
+            else if (ii == argc - 1)
+            {
+                input = unescape(argv[ii]);
+            }
+            else
+            {
+                std::cerr << "Unknown argument: " << arg << std::endl;
+                help(argc, argv);
+                exit(-1);
+            }
+        }
+
+        if(boost::ends_with(params, ".json"))
+        {
+            // load it
+            std::ifstream fs(params);
+            params = std::string(std::istreambuf_iterator<char>(fs),std::istreambuf_iterator<char>());
         }
 
         std::chrono::time_point<std::chrono::system_clock> start, end;
@@ -125,4 +127,3 @@ int main(int argc, char ** argv)
 
     return -1;
 }
-

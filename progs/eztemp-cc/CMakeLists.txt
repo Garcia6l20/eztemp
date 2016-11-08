@@ -7,6 +7,8 @@ add_executable(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME} PRIVATE eztemp)
 
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_uniform_initialization)
+
 install(TARGETS ${PROJECT_NAME}
         RUNTIME DESTINATION bin
         LIBRARY DESTINATION lib

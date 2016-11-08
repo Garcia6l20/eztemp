@@ -3,10 +3,18 @@
 
 #include <iostream>
 
+template <typename T = double>
+void eval_test(const std::string & input, const ez::temp::dict & d)
+{
+    std::cout << input << " -> " << ez::expr::eval<T>(input, d) << std::endl;
+}
+
 int main(int argc, char ** argv)
 {
     // eval example
-    std::cout << ez::expr::eval<double>("40+num", {{"num", double{2}}}) << std::endl;
+    eval_test<bool>("40+num==66", {{"num", double{2}}});
+    eval_test<bool>("40+num==42", {{"num", double{2}}});
+    eval_test<bool>("struct.one==struct.two", {{"struct", ez::temp::dict{{ "one", 2}, {"two", 2}}}});
 
     // custom function example
     ez::temp::renderer::add_function("say_my_name", [](const ez::temp::array & unsused){ return "Heisenberg !"; });

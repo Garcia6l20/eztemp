@@ -4,6 +4,7 @@
 #ifndef __EZTEMP_H__
 #define __EZTEMP_H__
 
+//#define BOOST_VARIANT_NO_FULL_RECURSIVE_VARIANT_SUPPORT
 #include <boost/variant.hpp>
 #include <boost/regex.hpp>
 
@@ -20,26 +21,51 @@
 
 namespace ez {
 
+static inline std::vector<std::string> split(const std::string &text, char sep) {
+  std::vector<std::string> tokens;
+  std::size_t start = 0, end = 0;
+  while ((end = text.find(sep, start)) != std::string::npos) {
+    tokens.push_back(text.substr(start, end - start));
+    start = end + 1;
+  }
+  tokens.push_back(text.substr(start));
+  return tokens;
+}
+
+static inline std::vector<std::string> split_one_of(const std::string &text, const std::string & seps) {
+  std::vector<std::string> tokens;
+  std::size_t start = 0, end = 0;
+  while ((end = text.find_first_of(seps, start)) != std::string::npos) {
+    tokens.push_back(text.substr(start, end - start));
+    start = end + 1;
+  }
+  tokens.push_back(text.substr(start));
+  return tokens;
+}
+
 namespace temp {
 
 /**
  * @brief EZ Node
  * A variant type holding manipulated values.
  */
-using node = boost::make_recursive_variant<
+typedef boost::make_recursive_variant<
     std::nullptr_t, std::string, int, double, bool,
     std::vector<boost::recursive_variant_>,
-    std::map<const std::string, boost::recursive_variant_>>::type;
+    std::map<const std::string, boost::recursive_variant_>>::type node;
 
 /**
  * @brief EZ Array
  * A list (vector) of nodes.
  */
-using array = std::vector<ez::temp::node>;
+typedef std::vector<ez::temp::node> array;
 
 /**
  * @brief EZ Dict
  **/
+typedef std::map<const std::string, node> dict;
+
+/*
 class dict: public std::map<const std::string, node>
 {
 public:
@@ -53,6 +79,7 @@ public:
     dict() {}
     static dict from_json(const std::string & json);
 };
+*/
 
 /**
  * @brief The token class
@@ -88,17 +115,6 @@ public:
     root_token(): token(token::type::root){}
     std::string render(const dict & context) override { throw std::runtime_error("Root token cannot be rendered"); }
 };
-
-inline std::vector<std::string> split(const std::string &text, char sep) {
-  std::vector<std::string> tokens;
-  std::size_t start = 0, end = 0;
-  while ((end = text.find(sep, start)) != std::string::npos) {
-    tokens.push_back(text.substr(start, end - start));
-    start = end + 1;
-  }
-  tokens.push_back(text.substr(start));
-  return tokens;
-}
 
 /**
  * @brief The text_token class
@@ -208,6 +224,13 @@ public:
         {
         }
     };
+
+    /**
+     * @brief Create a dict from json string.
+     * @param A json string.
+     * @return The created dictionary.
+     */
+    static dict make_dict(const std::string & json);
 
     /**
      * @brief Compile a template string.
